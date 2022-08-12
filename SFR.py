@@ -354,7 +354,8 @@ def calc_sfr(image, oversampling=4, show_plots=False, offset=None, angle=None,
             idx_low, idx_hi = idx_right, idx_left
 
         import untitled4
-        im = untitled4.remove_gradient(image, idx_low, idx_hi)
+        im = untitled4.remove_gradient(image, idx_low, idx_hi, 
+                                       dist=dist, verbose=True, show_plots=True)
 
         return image
 
@@ -461,9 +462,9 @@ def main():
     oversampling = 4
     N = 100
     np.random.seed(0)
-    im = plt.imread("slanted_edge_example.png")
-    im = slanted_edge_target.make_slanted_curved_edge((N, N), angle=0.1 * 5.0,
-                                                      curvature=0 * 0.001 * 100 / N,
+    # im = plt.imread("slanted_edge_example.png")
+    im = slanted_edge_target.make_slanted_curved_edge((N, N), angle=1 * 5.0,
+                                                      curvature=-1 * 0.001 * 100 / N,
                                                       illum_gradient_magnitude=1 * +0.3,
                                                       black_lvl=0.00)
     sample_edge = relative_luminance(im)

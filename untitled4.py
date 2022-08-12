@@ -6,6 +6,7 @@ Created on Mon Aug  1 11:51:59 2022
 """
 import numpy as np
 from execution_timer import execution_timer
+import slanted_edge_target
 
 
 @execution_timer
@@ -27,8 +28,8 @@ def fit_plane(z, pts):
     return coefs, res
 
 
-def remove_gradient(image, idx_lo, idx_hi, allowed_gradient=1e-4,
-                    step_factor_limit=1.1):
+def remove_gradient(image, idx_lo, idx_hi, dist=None, allowed_gradient=1e-4,
+                    step_factor_limit=1.1, verbose=False, show_plots=False):
     # Analyze the supplied slanted edge for signs of a illumination gradient. 
     # If present, remove it and return the flattened image.
     # image: numpy aray with slanted edge image
@@ -47,7 +48,6 @@ def remove_gradient(image, idx_lo, idx_hi, allowed_gradient=1e-4,
     coefs, res, nonuniform_illum = {}, {}, {}
     for side in ['hi', 'lo']:
         coefs[side], res[side] = fit_plane(image, idx[side])
-        # print(side, *coefs[side], res[side])
 
         # Check if gradients along x and/or y-directions is larger than the
         # allowed value
@@ -55,56 +55,67 @@ def remove_gradient(image, idx_lo, idx_hi, allowed_gradient=1e-4,
         nonuniform_illum[side] = \
             np.linalg.norm(coefs[side][:2] / coefs[side][2]) > allowed_gradient
 
-    print("coefs['hi']", *coefs['hi'])
-    print("coefs['lo']", *coefs['lo'])
+    verbose and print("coefs['hi']:", np.array_str(coefs['hi'], precision=2))
+    verbose and print("coefs['lo']:", np.array_str(coefs['lo'], precision=2))
 
     # Estimate illumination step factor ('isf') by comparing the linear 
-    # coefficients in x and y for he 'hi' and 'lo' parts
+    # coefficients in x and y for the 'hi' and 'lo' parts
     isf = np.linalg.norm(coefs['hi'][:2]) / np.linalg.norm(coefs['lo'][:2])
     # total step factor, incl. black level
     tsf = np.linalg.norm(coefs['hi'][2]) / np.linalg.norm(coefs['lo'][2])
-    print(f"isf: {isf:f}, tsf: {tsf:f}")
+    verbose and print(f"isf: {isf:f}, tsf: {tsf:f}")
 
     if nonuniform_illum['lo'] and nonuniform_illum['hi'] and isf > step_factor_limit:
         # Estimate  camera black_level
         hi_lo = coefs['hi'][2] - coefs['lo'][2]
         bl = coefs['hi'][2] - isf / (isf - 1) * hi_lo  # estimated black level
 
-        print(f"Estim. step factor: {isf:.3f}, estim. camera black level: {bl:.3f}")
+        verbose and print(f"Estim. step factor: {isf:.3f}, estim. camera black level: {bl:.3f}")
 
+        # # Compensated (gradient removed) image:
+        # image_s = image * 1.0  # TODO: copy image in a nicer way
+        # # image_s[idx_edge] = 0.0
+        # for side in ['lo', 'hi']:
+        #         image_s[idx[side]] = image_s[idx[side]] - \
+        #                          coefs[side][0] * xx[idx[side]] - coefs[side][1] * yy[idx[side]]
+                                 
         # Compensated (gradient removed) image:
-        image_s = image * 1.0  # TODO: copy image in a nicer way
-        image_s[idx_edge] = 0.0
+        
+        esf = slanted_edge_target.InterpolateESF([-0.5, 0.5], [0.0, 1.0]).f
+        f = {'lo': 1.0 + (0.0 - 1.0) * esf(dist),
+             'hi': 0.0 + (1.0 - 0.0) * esf(dist)}
+        image_s = np.zeros(image.shape)
         for side in ['lo', 'hi']:
-            image_s[idx[side]] = image_s[idx[side]] - \
-                                 coefs[side][0] * xx[idx[side]] - coefs[side][1] * yy[idx[side]]
+            image_s += f[side] * (image - coefs[side][0] * xx - coefs[side][1] * yy)
+                                 
     else:
         image_s = image * 1.0  # TODO: copy image in a nicer way
         bl = None
-        print(f"Estim. step factor: {isf:.3f}, camera black level could not be determined")
+        verbose and print(f"Estim. step factor: {isf:.3f}, camera black level could not be determined")
 
     rel_noise = np.std(image_s[idx['hi']]) / np.mean(image_s[idx['hi']])
 
-    print(f"Noise: {rel_noise * 100:.2f}%")
+    verbose and print(f"Noise: {rel_noise * 100:.2f}%")
 
     import matplotlib.pyplot as plt
     plt.figure()
-    for ii in [0, rows - 1]:
-        # plt.plot(xx[ii, :], zz_opt[ii, :], '-', label='zz_opt')
-        plt.plot(xx[ii, :], image[ii, :], '-', label=f'image, row {ii:d}')
-        # # plt.plot(xx[ii, :], zz_orig[ii, :], '.-', label='zz_orig')
-        # plt.plot(xx[ii, :], zz_fit[ii, :], '-', label='zz_fit')
-        if nonuniform_illum['hi']:
-            # plt.plot(xx[ii, :], zz_corrected[ii, :], '-', label='zz_corrected')  
-            plt.plot(xx[ii, :], image_s[ii, :], '-', linewidth=1.5, label=f'image_s, row {ii:d}')
-            # plt.plot(xx[ii, :], zz_comp[ii, :], '-', label='zz_comp')  
-            title = f"black_level: {bl:.2f}, illum step factor: {isf:.2f}, noise: {rel_noise * 100:.2f}%"
-        else:
-            title = f"No gradient correction was made, noise: {rel_noise * 100:.2f}%"
-        plt.title(title)
-        plt.grid('both')
-        plt.legend()
-    plt.show()
+    if show_plots:
+        for ii in [0, rows - 1]:
+            # plt.plot(xx[ii, :], zz_opt[ii, :], '-', label='zz_opt')
+            plt.plot(xx[ii, :], image[ii, :], '-', label=f'image, row {ii:d}')
+            # # plt.plot(xx[ii, :], zz_orig[ii, :], '.-', label='zz_orig')
+            # plt.plot(xx[ii, :], zz_fit[ii, :], '-', label='zz_fit')
+            if nonuniform_illum['hi']:
+                # plt.plot(xx[ii, :], zz_corrected[ii, :], '-', label='zz_corrected')  
+                plt.plot(xx[ii, :], image_s[ii, :], '-', linewidth=1.5, label=f'image_s, row {ii:d}')
+                # plt.plot(xx[ii, :], zz_comp[ii, :], '-', label='zz_comp')  
+                title = f"black_level: {bl:.2f}, illum step factor: {isf:.2f}, noise: {rel_noise * 100:.2f}%"
+            else:
+                title = f"No gradient correction was made, noise: {rel_noise * 100:.2f}%"
+            plt.title(title)
+            plt.grid('both')
+            plt.legend()
+        plt.show()
 
     return idx_edge, rel_noise, bl, isf
 
@@ -136,4 +147,4 @@ if __name__ == '__main__':
     zz *= 1 + n_sigma * np.random.randn(*zz.shape)
 
     remove_gradient(zz, pts['lo'], pts['hi'], allowed_gradient=1e-4,
-                    step_factor_limit=1.1)
+                    step_factor_limit=1.1, verbose=True, show_plots=True)
