@@ -43,7 +43,7 @@ def centroid(arr, conv_kernel=3, win_width=5):
 
     win = np.zeros(arr.shape)
     for i in range(height):
-        win_c = np.argmax(np.convolve(arr[i, :], np.ones(conv_kernel), 'same'))
+        win_c = np.argmax(np.abs(np.convolve(arr[i, :], np.ones(conv_kernel), 'same')))
         win[i, win_c - win_width:win_c + win_width] = 1.0
 
         # x = np.ones((height, 1)) * np.arange(width)  # TODO shall we continue to use this?
@@ -466,7 +466,8 @@ def main():
     im = slanted_edge_target.make_slanted_curved_edge((N, N), angle=1 * 5.0,
                                                       curvature=-1 * 0.001 * 100 / N,
                                                       illum_gradient_magnitude=1 * +0.3,
-                                                      black_lvl=0.00)
+                                                      black_lvl=0.05)
+    im = im[:, ::-1]
     sample_edge = relative_luminance(im)
     for simulate_noise in [False]:  # [False, True]:
         # simulate photon noise

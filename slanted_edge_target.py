@@ -67,7 +67,7 @@ class InterpolateESF:
 
 
 def make_slanted_curved_edge(image_shape=(100, 100), angle=5.0, curvature=0.001,
-                             low_level=0.20, hi_level=0.80, black_lvl=0.05,
+                             low_level=0.25, hi_level=0.85, black_lvl=0.05,
                              illum_gradient_angle=90.0,
                              illum_gradient_magnitude=+0.05, esf=InterpolateESF([-0.5, 0.5], [0.0, 1.0]).f):
 

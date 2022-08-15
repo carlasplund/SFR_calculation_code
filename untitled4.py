@@ -78,16 +78,18 @@ def remove_gradient(image, idx_lo, idx_hi, dist=None, allowed_gradient=1e-4,
         # for side in ['lo', 'hi']:
         #         image_s[idx[side]] = image_s[idx[side]] - \
         #                          coefs[side][0] * xx[idx[side]] - coefs[side][1] * yy[idx[side]]
-                                 
+
+        # Flip sign of dist if the area left of the edge is the bright side
+        dist *= -1.0 if np.mean(dist[idx_lo]) > np.mean(dist[idx_hi]) else 1.0
+
         # Compensated (gradient removed) image:
-        
         esf = slanted_edge_target.InterpolateESF([-0.5, 0.5], [0.0, 1.0]).f
         f = {'lo': 1.0 + (0.0 - 1.0) * esf(dist),
-             'hi': 0.0 + (1.0 - 0.0) * esf(dist)}
+              'hi': 0.0 + (1.0 - 0.0) * esf(dist)}
         image_s = np.zeros(image.shape)
         for side in ['lo', 'hi']:
             image_s += f[side] * (image - coefs[side][0] * xx - coefs[side][1] * yy)
-                                 
+
     else:
         image_s = image * 1.0  # TODO: copy image in a nicer way
         bl = None
