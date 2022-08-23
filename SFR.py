@@ -366,9 +366,10 @@ def calc_sfr(image, oversampling=4, show_plots=False, offset=None, angle=None,
     if show_plots or return_fig:
         i1, i2 = idx
         nn = (i2 - i1) // 2
+        lsf_sign = np.sign(np.mean(lsf[i1:i2] * hann_win))
         fig, ax = plt.subplots(figsize=(8, 5), dpi=200)
         ax.plot(esf[i1:i2], 'b.-', label=f"ESF, oversampling: {oversampling:2d}")
-        ax.plot(lsf[i1:i2], 'r.-', label="LSF")
+        ax.plot(lsf_sign * lsf[i1:i2], 'r.-', label=f"{'-' if lsf_sign < 0 else ''}LSF")
         # ax.plot(lsf_conv, 'k:', label="conv LSF")
         ax.plot(hann_win * ax.axes.get_ylim()[1] * 1.1, 'g.-', label=f"Hann window, width: {hann_width:d}")
         ax.set_xlim(0, 2 * nn)
