@@ -146,6 +146,7 @@ def calc_custom_esf(x_length=5.0, x_step=0.01, x_edge=0.0, fill_factor=1.00,
     edge_lsf_pixel = conv(edge_lsf, pixel)
     
     if show_plots:
+        import matplotlib.pyplot as plt
         plt.figure()
         plt.plot(x, edge, label='edge')
         plt.plot(x, lsf, label='LSF from optics')
@@ -189,8 +190,8 @@ if __name__ == '__main__':
     x, edge_lsf_pixel = calc_custom_esf(sigma=0.8)  # arrays of positions and corresponding esf values
     esf = InterpolateESF(x, edge_lsf_pixel).f  # a more realistic (custom) esf
     
-    image_float = make_slanted_curved_edge((100, 100), illum_gradient_magnitude=0.1, 
-                                           esf=esf, angle=5.0)
+    image_float = make_slanted_curved_edge((100, 100), illum_gradient_angle=45.0, illum_gradient_magnitude=0.15, 
+                                           low_level=0.25, hi_level=0.70, esf=esf, angle=5.0)
 
     # Display the image in 8 bit grayscale
     nbits = 8

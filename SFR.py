@@ -291,7 +291,7 @@ def calc_mtf(lsf, hann_win, idx, oversampling, diff_ft):
 @execution_timer
 def calc_sfr(image, oversampling=4, show_plots=False, offset=None, angle=None,
              difference_scheme='backward', verbose=True, return_fig=False,
-             quadratic_fit=False):
+             quadratic_fit=False, try_to_remove_gradient=False):
     """"
     Calculate spectral response function (MTF)
     """
@@ -306,81 +306,91 @@ def calc_sfr(image, oversampling=4, show_plots=False, offset=None, angle=None,
         diff_offset = 0.0
         diff_ft = 2
 
-    # Calculate centroids for the edge transition of each row
-    sample_diff = differentiate(image, diff_kernel)
-    centr = centroid(sample_diff) + diff_offset
-
-    # Calculate centroids also for the 90° right rotated image
-    image_rot90 = image.T[:, ::-1]  # rotate by transposing and mirroring
-    sample_diff = differentiate(image_rot90, diff_kernel)
-    centr_rot = centroid(sample_diff) + diff_offset
-
-    # Use rotated image if it results in fewer rows without edge transitions
-    if np.sum(np.isnan(centr_rot)) < np.sum(np.isnan(centr)):
-        verbose and print("Rotating image by 90°")
-        image, centr = image_rot90, centr_rot
-        rotated = True
-    else:
-        rotated = False  # TODO: return information that image was rotated to caller
-
-    # Finds polynomials that describes the slanted edge by least squares 
-    # regression to the centroids:
-    #  - pcoefs are the 2nd order fit coefficients
-    #  - [slope, offset] are the first order (linear) fit coefficients for the same edge
-    pcoefs, slope, offset = find_edge(centr, image.shape, angle=angle,
-                                      show_plots=show_plots, verbose=verbose)
-
-    pcoefs = [0.0, slope, offset] if not quadratic_fit else pcoefs
-
-    # Calculate distance (with sign) from each point (x, y) in the
-    # image patch "data" to the slanted edge
-    dist = calc_distance(image.shape, pcoefs, quadratic_fit=quadratic_fit, verbose=verbose)
-
-    esf = project_and_bin(image, dist, oversampling, verbose=verbose)  # edge spread function
-
-    lsf = differentiate(esf, diff_kernel)  # line spread function
-
-    hann_win, hann_width, idx = filter_window(lsf, oversampling)  # define window to be applied on LSF
-
-    def compensate_gradient(image, dist, edge_width):
-        print("-------------------------------------------------------------")
-        # idx_edge = (-edge_width / 2 < dist) & (dist < edge_width / 2)
-
-        idx_left = dist < -edge_width / 2
-        idx_right = dist > edge_width / 2
-        if np.mean(image[idx_left]) < np.mean(image[idx_right]):
-            idx_low, idx_hi = idx_left, idx_right
+    removed_gradient = False
+    while True:
+        # Calculate centroids for the edge transition of each row
+        sample_diff = differentiate(image, diff_kernel)
+        centr = centroid(sample_diff) + diff_offset
+    
+        # Calculate centroids also for the 90° right rotated image
+        image_rot90 = image.T[:, ::-1]  # rotate by transposing and mirroring
+        sample_diff = differentiate(image_rot90, diff_kernel)
+        centr_rot = centroid(sample_diff) + diff_offset
+    
+        # Use rotated image if it results in fewer rows without edge transitions
+        if np.sum(np.isnan(centr_rot)) < np.sum(np.isnan(centr)):
+            verbose and print("Rotating image by 90°")
+            image, centr = image_rot90, centr_rot
+            rotated = True
         else:
-            idx_low, idx_hi = idx_right, idx_left
+            rotated = False  # TODO: return information that image was rotated to caller
+    
+        # Finds polynomials that describes the slanted edge by least squares 
+        # regression to the centroids:
+        #  - pcoefs are the 2nd order fit coefficients
+        #  - [slope, offset] are the first order (linear) fit coefficients for the same edge
+        pcoefs, slope, offset = find_edge(centr, image.shape, angle=angle,
+                                          show_plots=show_plots, verbose=verbose)
+    
+        pcoefs = [0.0, slope, offset] if not quadratic_fit else pcoefs
+    
+        # Calculate distance (with sign) from each point (x, y) in the
+        # image patch "data" to the slanted edge
+        dist = calc_distance(image.shape, pcoefs, quadratic_fit=quadratic_fit, verbose=verbose)
+    
+        esf = project_and_bin(image, dist, oversampling, verbose=verbose)  # edge spread function
+    
+        lsf = differentiate(esf, diff_kernel)  # line spread function
+    
+        hann_win, hann_width, idx = filter_window(lsf, oversampling)  # define window to be applied on LSF
+    
+        def compensate_gradient(image, dist, edge_width, show_plots):
+            print("-------------------------------------------------------------")
+            # idx_edge = (-edge_width / 2 < dist) & (dist < edge_width / 2)
+    
+            idx_left = dist < -edge_width / 2
+            idx_right = dist > edge_width / 2
+            if np.mean(image[idx_left]) < np.mean(image[idx_right]):
+                idx_low, idx_hi = idx_left, idx_right
+            else:
+                idx_low, idx_hi = idx_right, idx_left
+    
+            import untitled4
+            image_s, removed_gradient, idx_edge, rel_noise, bl, isf = \
+                untitled4.remove_gradient(image, idx_low, idx_hi, dist=dist, 
+                verbose=True, show_plots=show_plots)
+    
+            return image_s, removed_gradient
+    
+        mtf = calc_mtf(lsf, hann_win, idx, oversampling, diff_ft)
+    
+        if show_plots or return_fig:
+            i1, i2 = idx
+            nn = (i2 - i1) // 2
+            lsf_sign = np.sign(np.mean(lsf[i1:i2] * hann_win))
+            fig, ax = plt.subplots(figsize=(8, 5), dpi=200)
+            ax.plot(esf[i1:i2], 'b.-', label=f"ESF, oversampling: {oversampling:2d}")
+            ax.plot(lsf_sign * lsf[i1:i2], 'r.-', label=f"{'-' if lsf_sign < 0 else ''}LSF")
+            # ax.plot(lsf_conv, 'k:', label="conv LSF")
+            ax.plot(hann_win * ax.axes.get_ylim()[1] * 1.1, 'g.-', label=f"Hann window, width: {hann_width:d}")
+            ax.set_xlim(0, 2 * nn)
+            ax2 = ax.twinx()
+            ax2.get_yaxis().set_visible(False)
+            ax.grid()
+            ax.legend(loc='upper left')
+            # ax2.legend(loc='upper right')
+            ax.set_xlabel('Bin no.')
+            if show_plots:
+                plt.show()
+    
+        if try_to_remove_gradient:
+            image_s, removed_gradient = compensate_gradient(
+                image, dist, 0.5 * hann_width / oversampling, show_plots)
+            image = image_s
+        
+        if not removed_gradient:
+            break        
 
-        import untitled4
-        im = untitled4.remove_gradient(image, idx_low, idx_hi, 
-                                       dist=dist, verbose=True, show_plots=True)
-
-        return image
-
-    image = compensate_gradient(image, dist, hann_width / oversampling)
-
-    mtf = calc_mtf(lsf, hann_win, idx, oversampling, diff_ft)
-
-    if show_plots or return_fig:
-        i1, i2 = idx
-        nn = (i2 - i1) // 2
-        lsf_sign = np.sign(np.mean(lsf[i1:i2] * hann_win))
-        fig, ax = plt.subplots(figsize=(8, 5), dpi=200)
-        ax.plot(esf[i1:i2], 'b.-', label=f"ESF, oversampling: {oversampling:2d}")
-        ax.plot(lsf_sign * lsf[i1:i2], 'r.-', label=f"{'-' if lsf_sign < 0 else ''}LSF")
-        # ax.plot(lsf_conv, 'k:', label="conv LSF")
-        ax.plot(hann_win * ax.axes.get_ylim()[1] * 1.1, 'g.-', label=f"Hann window, width: {hann_width:d}")
-        ax.set_xlim(0, 2 * nn)
-        ax2 = ax.twinx()
-        ax2.get_yaxis().set_visible(False)
-        ax.grid()
-        ax.legend(loc='upper left')
-        # ax2.legend(loc='upper right')
-        ax.set_xlabel('Bin no.')
-        if show_plots:
-            plt.show()
 
     angle = angle_from_slope(slope)
     if not return_fig:
@@ -459,16 +469,54 @@ def relative_luminance(rgb_image, rgb_w=(0.2126, 0.7152, 0.0722)):
 
 
 def main():
+    import os.path
+    
     show_plots = True
+    show_plots2 = False
     oversampling = 4
     N = 100
     np.random.seed(0)
-    # im = plt.imread("slanted_edge_example.png")
-    im = slanted_edge_target.make_slanted_curved_edge((N, N), angle=1 * 5.0,
-                                                      curvature=-1 * 0.001 * 100 / N,
-                                                      illum_gradient_magnitude=1 * +0.3,
-                                                      black_lvl=0.05)
+    im = plt.imread("slanted_edge_example.png")
+    
+        
+    # --------------------------------------------------------------------------------
+    # Create a curved edge image with a custom esf
+    esf = slanted_edge_target.InterpolateESF([-0.5, 0.5], [0.0, 1.0]).f  # ideal edge esf for pixels with 100% fill factor
+    
+    x, edge_lsf_pixel = slanted_edge_target.calc_custom_esf(sigma=0.2, show_plots=show_plots2)  # arrays of positions and corresponding esf values
+    esf = slanted_edge_target.InterpolateESF(x, edge_lsf_pixel).f  # a more realistic (custom) esf
+    
+    image_float = slanted_edge_target.make_slanted_curved_edge((100, 100), curvature=1*0.001, 
+                                                               illum_gradient_angle=45.0, 
+                                                               illum_gradient_magnitude=-0*-0.30, 
+                                           low_level=0.25, hi_level=0.70, esf=esf, angle=5.0)
+    im = image_float
+    
+    # im = slanted_edge_target.make_slanted_curved_edge((N, N), angle=1 * 5.0,
+    #                                                   curvature=-1 * 0.001 * 100 / N,
+    #                                                   illum_gradient_magnitude=1 * +0.3,
+    #                                                   black_lvl=0.05)
+    # im = slanted_edge_target.make_slanted_curved_edge((N, N), angle=1 * 5.0,
+    #                                                   curvature=-1 * 0.001 * 100 / N,
+    #                                                   illum_gradient_magnitude=1 * +0.3,
+    #                                                   black_lvl=0.05)
     im = im[:, ::-1]
+    
+    # Display the image in 8 bit grayscale
+    nbits = 8
+    image_int = np.round((2 ** nbits - 1) * im.clip(0.0, 1.0)).astype(np.uint8)
+    image_int = np.stack([image_int for i in range(3)], axis=2)
+    if show_plots2:
+        plt.imshow(image_int)
+        plt.show()
+    
+        # Save as an image file in the current directory
+        current_dir = os.path.abspath(os.path.dirname(__file__))
+        save_path = os.path.join(current_dir, "slanted_edge_example.png")
+        plt.imsave(save_path, image_int, vmin=0, vmax=255, cmap='gray')
+    
+    
+    
     sample_edge = relative_luminance(im)
     for simulate_noise in [False]:  # [False, True]:
         # simulate photon noise
@@ -479,7 +527,7 @@ def main():
         else:
             sample = sample_edge
 
-        if show_plots:
+        if show_plots2:
             # display the image in 8 bit grayscale
             nbits = 8
             image_int = np.round((2 ** nbits - 1) * sample.clip(0.0, 1.0)).astype(np.uint8)
@@ -490,14 +538,21 @@ def main():
             # plt.imshow(image_int, cmap='gray', vmin=0, vmax=255)
             plt.show()
 
-        mtf, _, _ = calc_sfr(sample, oversampling=oversampling, show_plots=False)
-        mtf_quadr, _, _ = calc_sfr(sample, oversampling=oversampling, angle=None,
-                                   show_plots=show_plots, quadratic_fit=True)
+        # mtf, _, _ = calc_sfr(sample, oversampling=oversampling, show_plots=False)
+        mtf, _, _ = calc_sfr(sample, oversampling=oversampling, show_plots=show_plots2)
+        mtf_rem_gr, _, _ = calc_sfr(sample, oversampling=oversampling, show_plots=show_plots2, try_to_remove_gradient=True)
 
+        mtf_quadr, _, _ = calc_sfr(sample, oversampling=oversampling, angle=None,
+                                   show_plots=show_plots2, quadratic_fit=True)
+        mtf_quadr_rem_gr, _, _ = calc_sfr(sample, oversampling=oversampling, angle=None,
+                                   show_plots=show_plots2, quadratic_fit=True, try_to_remove_gradient=True)
+        
         if show_plots:
             plt.figure()
             plt.plot(mtf[:, 0], mtf[:, 1], '.-', label="linear fit to edge")
+            plt.plot(mtf_rem_gr[:, 0], mtf_rem_gr[:, 1], '-', label="linear fit, removed grad.")
             plt.plot(mtf_quadr[:, 0], mtf_quadr[:, 1], '.-', label="quadratic fit to edge")
+            plt.plot(mtf_quadr_rem_gr[:, 0], mtf_quadr_rem_gr[:, 1], '--', label="quad. fit to edge, removed grad.")
             f = np.arange(0.0, 2.0, 0.01)
             mtf_sinc = np.abs(np.sinc(f))
             plt.plot(f, mtf_sinc, 'k-', label="sinc")

@@ -65,7 +65,8 @@ def remove_gradient(image, idx_lo, idx_hi, dist=None, allowed_gradient=1e-4,
     tsf = np.linalg.norm(coefs['hi'][2]) / np.linalg.norm(coefs['lo'][2])
     verbose and print(f"isf: {isf:f}, tsf: {tsf:f}")
 
-    if nonuniform_illum['lo'] and nonuniform_illum['hi'] and isf > step_factor_limit:
+    remove_gradient = nonuniform_illum['lo'] and nonuniform_illum['hi'] and isf > step_factor_limit
+    if remove_gradient:
         # Estimate  camera black_level
         hi_lo = coefs['hi'][2] - coefs['lo'][2]
         bl = coefs['hi'][2] - isf / (isf - 1) * hi_lo  # estimated black level
@@ -104,12 +105,12 @@ def remove_gradient(image, idx_lo, idx_hi, dist=None, allowed_gradient=1e-4,
     if show_plots:
         for ii in [0, rows - 1]:
             # plt.plot(xx[ii, :], zz_opt[ii, :], '-', label='zz_opt')
-            plt.plot(xx[ii, :], image[ii, :], '-', label=f'image, row {ii:d}')
+            plt.plot(xx[ii, :], image[ii, :], '.-', label=f'image, row {ii:d}')
             # # plt.plot(xx[ii, :], zz_orig[ii, :], '.-', label='zz_orig')
             # plt.plot(xx[ii, :], zz_fit[ii, :], '-', label='zz_fit')
             if nonuniform_illum['hi']:
                 # plt.plot(xx[ii, :], zz_corrected[ii, :], '-', label='zz_corrected')  
-                plt.plot(xx[ii, :], image_s[ii, :], '-', linewidth=1.5, label=f'image_s, row {ii:d}')
+                plt.plot(xx[ii, :], image_s[ii, :], '.-', linewidth=1.5, label=f'image_s, row {ii:d}')
                 # plt.plot(xx[ii, :], zz_comp[ii, :], '-', label='zz_comp')  
                 title = f"black_level: {bl:.2f}, illum step factor: {isf:.2f}, noise: {rel_noise * 100:.2f}%"
             else:
@@ -119,7 +120,7 @@ def remove_gradient(image, idx_lo, idx_hi, dist=None, allowed_gradient=1e-4,
             plt.legend()
         plt.show()
 
-    return idx_edge, rel_noise, bl, isf
+    return image_s, remove_gradient, idx_edge, rel_noise, bl, isf
 
 
 if __name__ == '__main__':
