@@ -355,9 +355,9 @@ def calc_sfr(image, oversampling=4, show_plots=False, offset=None, angle=None,
             else:
                 idx_low, idx_hi = idx_right, idx_left
     
-            import untitled4
+            import remove_gradient
             image_s, removed_gradient, idx_edge, rel_noise, bl, isf = \
-                untitled4.remove_gradient(image, idx_low, idx_hi, dist=dist, 
+                remove_gradient.remove_gradient(image, idx_low, idx_hi, dist=dist, 
                 verbose=True, show_plots=show_plots)
     
             return image_s, removed_gradient
@@ -483,12 +483,12 @@ def main():
     # Create a curved edge image with a custom esf
     esf = slanted_edge_target.InterpolateESF([-0.5, 0.5], [0.0, 1.0]).f  # ideal edge esf for pixels with 100% fill factor
     
-    x, edge_lsf_pixel = slanted_edge_target.calc_custom_esf(sigma=0.2, show_plots=show_plots2)  # arrays of positions and corresponding esf values
+    x, edge_lsf_pixel = slanted_edge_target.calc_custom_esf(sigma=0.3, show_plots=show_plots2)  # arrays of positions and corresponding esf values
     esf = slanted_edge_target.InterpolateESF(x, edge_lsf_pixel).f  # a more realistic (custom) esf
     
     image_float = slanted_edge_target.make_slanted_curved_edge((100, 100), curvature=1*0.001, 
                                                                illum_gradient_angle=45.0, 
-                                                               illum_gradient_magnitude=-0*-0.30, 
+                                                               illum_gradient_magnitude=-1*-0.30, 
                                            low_level=0.25, hi_level=0.70, esf=esf, angle=5.0)
     im = image_float
     
@@ -506,7 +506,7 @@ def main():
     nbits = 8
     image_int = np.round((2 ** nbits - 1) * im.clip(0.0, 1.0)).astype(np.uint8)
     image_int = np.stack([image_int for i in range(3)], axis=2)
-    if show_plots2:
+    if True or show_plots2:
         plt.imshow(image_int)
         plt.show()
     
@@ -515,7 +515,7 @@ def main():
         save_path = os.path.join(current_dir, "slanted_edge_example.png")
         plt.imsave(save_path, image_int, vmin=0, vmax=255, cmap='gray')
     
-    
+    im = plt.imread("slanted_edge_example.png")
     
     sample_edge = relative_luminance(im)
     for simulate_noise in [False]:  # [False, True]:
