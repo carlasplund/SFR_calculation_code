@@ -23,10 +23,12 @@ area under the MTF curve out to a given spatial frequency.
 * output: angle (degrees) and offset (px) for the optimal edge, to be used as input for SFR.calc_sfr()
 """
 
-import slanted_edge_target
 import matplotlib.pyplot as plt
 import numpy as np
 import scipy.signal
+
+import slanted_edge_target
+import remove_gradient
 from execution_timer import execution_timer
 
 
@@ -276,6 +278,23 @@ def filter_window(lsf, oversampling, lsf_centering_kernel_sz=9,
     return hann_win, 2 * hann_hw, [i1, i2]
 
 
+def compensate_gradient(image, dist, edge_width, show_plots):
+    print("-------------------------------------------------------------")
+
+    idx_left = dist < -edge_width / 2
+    idx_right = dist > edge_width / 2
+    if np.mean(image[idx_left]) < np.mean(image[idx_right]):
+        idx_low, idx_hi = idx_left, idx_right
+    else:
+        idx_low, idx_hi = idx_right, idx_left
+
+    image_s, removed_gradient, idx_edge, rel_noise, bl, isf = \
+        remove_gradient.remove_gradient(image, idx_low, idx_hi, dist=dist, 
+        verbose=True, show_plots=show_plots)
+
+    return image_s, removed_gradient
+
+
 def calc_mtf(lsf, hann_win, idx, oversampling, diff_ft):
     # Calculate spatial frequency response (from the unfiltered LSF)
     i1, i2 = idx
@@ -344,24 +363,6 @@ def calc_sfr(image, oversampling=4, show_plots=False, offset=None, angle=None,
     
         hann_win, hann_width, idx = filter_window(lsf, oversampling)  # define window to be applied on LSF
     
-        def compensate_gradient(image, dist, edge_width, show_plots):
-            print("-------------------------------------------------------------")
-            # idx_edge = (-edge_width / 2 < dist) & (dist < edge_width / 2)
-    
-            idx_left = dist < -edge_width / 2
-            idx_right = dist > edge_width / 2
-            if np.mean(image[idx_left]) < np.mean(image[idx_right]):
-                idx_low, idx_hi = idx_left, idx_right
-            else:
-                idx_low, idx_hi = idx_right, idx_left
-    
-            import remove_gradient
-            image_s, removed_gradient, idx_edge, rel_noise, bl, isf = \
-                remove_gradient.remove_gradient(image, idx_low, idx_hi, dist=dist, 
-                verbose=True, show_plots=show_plots)
-    
-            return image_s, removed_gradient
-    
         mtf = calc_mtf(lsf, hann_win, idx, oversampling, diff_ft)
     
         if show_plots or return_fig:
@@ -383,13 +384,20 @@ def calc_sfr(image, oversampling=4, show_plots=False, offset=None, angle=None,
             if show_plots:
                 plt.show()
     
+        # See if there is a gradient to be removed. If so, try to remove it 
+        # and repeat all processing using the flattened image. Precise 
+        # knowledge of the edge location and width is important for a 
+        # successful gradient removal, that is why it is not attempted earlier 
+        # in the program code 
         if try_to_remove_gradient:
-            image_s, removed_gradient = compensate_gradient(
-                image, dist, 0.5 * hann_width / oversampling, show_plots)
-            image = image_s
+            edge_width = 0.5 * hann_width / oversampling
+            image, removed_gradient = compensate_gradient(
+                image, dist, edge_width, show_plots)
+        else:
+            break
         
         if not removed_gradient:
-            break        
+            break  # gradient is already removed (this is 2nd pass)
 
 
     angle = angle_from_slope(slope)
@@ -492,14 +500,6 @@ def main():
                                            low_level=0.25, hi_level=0.70, esf=esf, angle=5.0)
     im = image_float
     
-    # im = slanted_edge_target.make_slanted_curved_edge((N, N), angle=1 * 5.0,
-    #                                                   curvature=-1 * 0.001 * 100 / N,
-    #                                                   illum_gradient_magnitude=1 * +0.3,
-    #                                                   black_lvl=0.05)
-    # im = slanted_edge_target.make_slanted_curved_edge((N, N), angle=1 * 5.0,
-    #                                                   curvature=-1 * 0.001 * 100 / N,
-    #                                                   illum_gradient_magnitude=1 * +0.3,
-    #                                                   black_lvl=0.05)
     im = im[:, ::-1]
     
     # Display the image in 8 bit grayscale
