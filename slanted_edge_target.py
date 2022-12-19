@@ -1,5 +1,13 @@
 """
-slanted_edge_target.m
+slanted_edge_target.m - Create synthetic slanted edges with varying levels of sharpness and imperfections
+Written in 2022 by Carl Asplund carl.asplund@eclipseoptics.com
+
+To the extent possible under law, the author(s) have dedicated all copyright 
+and related and neighboring rights to this software to the public domain worldwide. 
+This software is distributed without any warranty.
+You should have received a copy of the CC0 Public Domain Dedication along with 
+this software. If not, see <http://creativecommons.org/publicdomain/zero/1.0/>.
+
 
 make_ideal_slanted_edge()
 Make an ideal slanted edge passing through the center of the image, with 
@@ -198,7 +206,8 @@ if __name__ == '__main__':
     nbits = 8
     image_int = np.round((2 ** nbits - 1) * image_float.clip(0.0, 1.0)).astype(np.uint8)
     
-    # TODO: plt.ishow and plt.imsave with cmap='gray' doesn't interpolate properly(!), leaving histogram gaps and neighboring peaks, so we
+    # TODO: plt.ishow and plt.imsave with cmap='gray' doesn't interpolate 
+    # properly(!), leaving histogram gaps and neighboring peaks, so we
     # make an explicitly grayscale MxNx3 RGB image instead
     image_int = np.stack([image_int for i in range(3)], axis=2)
     plt.imshow(image_int)
@@ -213,7 +222,8 @@ if __name__ == '__main__':
     # Create a curved edge image with a custom esf
     esf = InterpolateESF([-0.5, 0.5], [0.0, 1.0]).f  # ideal edge esf for pixels with 100% fill factor
     
-    x, edge_lsf_pixel = calc_custom_esf(sigma=0.8, pixel_fill_factor=1.0, show_plots=5)  # arrays of positions and corresponding esf values
+    # arrays of positions and corresponding esf values
+    x, edge_lsf_pixel = calc_custom_esf(sigma=0.8, pixel_fill_factor=1.0, show_plots=5)
 
     esf = InterpolateESF(x, edge_lsf_pixel).f  # a more realistic (custom) esf
     

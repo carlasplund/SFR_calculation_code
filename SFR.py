@@ -1,10 +1,14 @@
 # -*- coding: utf-8 -*-
 """
-SFR.m
+SFR.m - Calculate spatial frequency response (SFR) for a slanted edge.
+Written in 2022 by Carl Asplund carl.asplund@eclipseoptics.com
 
-Created on Sat Jan  2 21:08:00 2021
+To the extent possible under law, the author(s) have dedicated all copyright 
+and related and neighboring rights to this software to the public domain worldwide. 
+This software is distributed without any warranty.
+You should have received a copy of the CC0 Public Domain Dedication along with 
+this software. If not, see <http://creativecommons.org/publicdomain/zero/1.0/>.
 
-@author: casp
 
 SFR.calc_sfr()
 Calculate spatial frequency response (SFR), a.k.a. MTF, for a slanted edge.
@@ -238,8 +242,8 @@ def project_and_bin(data, dist, oversampling, verbose=True):
                 esf[i] = np.mean(esf[j])  # use the interpolated value
                 patch_cntr += 1
         if patch_cntr > 0 and verbose:
-            print(f"Values in {patch_cntr:d} empty ESF bins were patched by interpolation between their respective "
-                  f"nearest neighbors.")
+            print(f"Values in {patch_cntr:d} empty ESF bins were patched by "
+                  f"interpolation between their respective nearest neighbors.")
     return esf
 
 
@@ -423,8 +427,10 @@ def main():
     # Create a curved edge image with a custom esf for testing
     esf = slanted_edge_target.InterpolateESF([-0.5, 0.5], [0.0, 1.0]).f  # ideal edge esf for pixels with 100% fill factor
     
-    x, edge_lsf_pixel = slanted_edge_target.calc_custom_esf(sigma=0.3, pixel_fill_factor=1.0, show_plots=show_plots)  # arrays of positions and corresponding esf values
-    esf = slanted_edge_target.InterpolateESF(x, edge_lsf_pixel).f  # a more realistic (custom) esf
+    # arrays of positions and corresponding esf values
+    x, edge_lsf_pixel = slanted_edge_target.calc_custom_esf(sigma=0.3, pixel_fill_factor=1.0, show_plots=show_plots)
+    # a more realistic (custom) esf
+    esf = slanted_edge_target.InterpolateESF(x, edge_lsf_pixel).f
     
     image_float, _ = slanted_edge_target.make_slanted_curved_edge((N, N), curvature=0.001, 
                                                                illum_gradient_angle=0.0, 
