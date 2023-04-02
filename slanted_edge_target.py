@@ -38,7 +38,8 @@ import numpy as np
 import SFR
 
 
-def make_ideal_slanted_edge(image_shape=(100, 100), angle=5.0, low_level=0.20, hi_level=0.80):
+def make_ideal_slanted_edge(image_shape=(100, 100), angle=5.0, low_level=0.20, hi_level=0.80,
+                            pixel_fill_factor=1.0):
     # Return slanted edge image as a 2-d Numpy array of float.
     # angle: angle (degrees) of slanted edge relative to vertical axis
     # low_level, hi_level: gray levels on either side of edge
@@ -52,6 +53,8 @@ def make_ideal_slanted_edge(image_shape=(100, 100), angle=5.0, low_level=0.20, h
     # >0 means pixel is to the right)
     dist_edge = np.cos(-angle*np.pi/180) * (xx - x_midpoint) + \
                 -np.sin(-angle*np.pi/180) * (yy - y_midpoint)
+                
+    dist_edge /= np.sqrt(pixel_fill_factor)
 
     return low_level + (hi_level - low_level) * (0.5 + dist_edge.clip(-0.5, 0.5))
 
@@ -199,24 +202,28 @@ if __name__ == '__main__':
     import os
     import matplotlib.pyplot as plt
 
-    # Create an ideal slanted edge image with default settings
-    image_float = make_ideal_slanted_edge((100, 100), angle=5.0)
+    for pixel_fill_factor in [1.0, 0.04]:
+        # Create an ideal slanted edge image with default settings
+        image_float = make_ideal_slanted_edge(pixel_fill_factor=pixel_fill_factor)
+    
+        # Display the image in 8 bit grayscale
+        nbits = 8
+        image_int = np.round((2 ** nbits - 1) * image_float.clip(0.0, 1.0)).astype(np.uint8)
+        
+        # TODO: plt.ishow and plt.imsave with cmap='gray' doesn't interpolate 
+        # properly(!), leaving histogram gaps and neighboring peaks, so we
+        # make an explicitly grayscale MxNx3 RGB image instead
+        image_int = np.stack([image_int for i in range(3)], axis=2)
+        plt.figure()
+        plt.imshow(image_int)
+        plt.title(f'Ideal slanted edge, fill factor={pixel_fill_factor}')
+        
+        # Save as an image file in the current directory
+        current_dir = os.path.abspath(os.path.dirname(__file__))
+        save_path = os.path.join(current_dir, "ideal_slanted_edge_example.png")
+        plt.imsave(save_path, image_int, vmin=0, vmax=255, cmap='gray')
 
-    # Display the image in 8 bit grayscale
-    nbits = 8
-    image_int = np.round((2 ** nbits - 1) * image_float.clip(0.0, 1.0)).astype(np.uint8)
-    
-    # TODO: plt.ishow and plt.imsave with cmap='gray' doesn't interpolate 
-    # properly(!), leaving histogram gaps and neighboring peaks, so we
-    # make an explicitly grayscale MxNx3 RGB image instead
-    image_int = np.stack([image_int for i in range(3)], axis=2)
-    plt.imshow(image_int)
     plt.show()
-    
-    # Save as an image file in the current directory
-    current_dir = os.path.abspath(os.path.dirname(__file__))
-    save_path = os.path.join(current_dir, "ideal_slanted_edge_example.png")
-    plt.imsave(save_path, image_int, vmin=0, vmax=255, cmap='gray')
     
     # --------------------------------------------------------------------------------
     # Create a curved edge image with a custom esf
