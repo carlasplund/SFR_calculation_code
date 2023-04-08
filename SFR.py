@@ -119,7 +119,7 @@ def find_edge(centr, patch_shape, rotated, angle=None, show_plots=False, verbose
         ax.set_aspect('equal', 'box')
         ax.legend(loc='best')
         ax.invert_yaxis()
-        plt.show()
+        # plt.show()
 
     return pcoefs, slope, offset
 
@@ -152,7 +152,7 @@ def cubic_solver(a, b, c, d):
 
     p = (3 * a * c - b ** 2) / (3 * a ** 2)
     q = (2 * b ** 3 - 9 * a * b * c + 27 * a ** 2 * d) / (27 * a ** 3)
-    
+
     # A real root exists if 4 * p**3 + 27 * q**2 > 0
     sr = np.sqrt(q ** 2 / 4 + p ** 3 / 27)
     t = np.cbrt(-q / 2 + sr) + np.cbrt(-q / 2 - sr)
@@ -180,7 +180,7 @@ def calc_distance(data_shape, p, quadratic_fit=False, verbose=False):
         slope, offset = p[1], p[2]  # use linear fit to edge
         a, b, c = 1, -slope, -offset
         a_b = np.sqrt(a ** 2 + b ** 2)
-       
+
         # |ax+by+c| / |a_b| is the distance from (x,y) to the slanted edge:
         dist = (a * x + b * y + c) / a_b
     else:
@@ -289,7 +289,7 @@ def calc_mtf(lsf, hann_win, idx, oversampling, diff_ft):
     # Calculate MTF using the LSF as input and use the supplied window function 
     # as filter to remove high frequency noise originating in regions far from 
     # the edge
-    
+
     i1, i2 = idx
     mtf = np.abs(np.fft.fft(lsf[i1:i2] * hann_win))
     nn = (i2 - i1) // 2
@@ -365,7 +365,7 @@ def calc_sfr(image, oversampling=4, show_plots=0, offset=None, angle=None,
         nn = (i2 - i1) // 2
         lsf_sign = np.sign(np.mean(lsf[i1:i2] * hann_win))
 
-        fig, ax = plt.subplots(figsize=(8, 5), dpi=200)
+        fig, ax = plt.subplots()
         ax.plot(esf[i1:i2], 'b.-', label=f"ESF, oversampling: {oversampling:2d}")
         ax.plot(lsf_sign * lsf[i1:i2], 'r.-', label=f"{'-' if lsf_sign < 0 else ''}LSF")
         ax.plot(hann_win * ax.axes.get_ylim()[1] * 1.1, 'g.-', label=f"Hann window, width: {hann_width:d}")
@@ -377,12 +377,10 @@ def calc_sfr(image, oversampling=4, show_plots=0, offset=None, angle=None,
         ax.set_xlabel('Bin no.')
         if verbose:
             textstr = '\n'.join([f"Curved edge fit: {quadratic_fit}",
-                                f"Difference scheme: {difference_scheme}"])
+                                 f"Difference scheme: {difference_scheme}"])
             props = dict(facecolor='wheat', alpha=0.5)
             ax.text(0.05, 0.50, textstr, transform=ax.transAxes,
                     verticalalignment='top', bbox=props)
-        if show_plots >= 3:
-            plt.show()
 
     angle = angle_from_slope(slope)
     angle_cw = rotated * 90.0 - angle  # angle clockwise (c.w.) from vertical axis
@@ -393,7 +391,7 @@ def calc_sfr(image, oversampling=4, show_plots=0, offset=None, angle=None,
               'offset': offset}
     if return_fig:
         status.update({'fig': fig, 'ax': ax})
-    
+
     return mtf, status
 
 
@@ -406,53 +404,54 @@ def relative_luminance(rgb_image, rgb_w=(0.2126, 0.7152, 0.0722)):
         return rgb_w[0] * rgb_image[:, :, 0] + rgb_w[1] * rgb_image[:, :, 1] + rgb_w[2] * rgb_image[:, :, 2]
 
 
-def main():
+def test():
     import os.path
 
     # A kind of "verbosity" for plots, higher value means more plots:
-    show_plots = 8  # setting whis to 0 will result in no plots and much faster execution
+    show_plots = 8  # setting this to 0 will result in no plots and much faster execution
     print(f"show_plots: {show_plots}")
-    
+
     oversampling = 4
     N = 100  # sample ROI size
 
     n_well_FS = 10000  # simulated no. of electrons at full scale for the noise calculation
     output_FS = 1.0  # image sensor output at full scale
-    
+
     def add_noise(sample_edge):
         np.random.seed(0)  # make the noise deterministic in order to facilitate comparisons and debugging
         return np.random.poisson(sample_edge / output_FS * n_well_FS) / n_well_FS
-       
+
     # --------------------------------------------------------------------
     # Create a curved edge image with a custom esf for testing
-    esf = slanted_edge_target.InterpolateESF([-0.5, 0.5], [0.0, 1.0]).f  # ideal edge esf for pixels with 100% fill factor
-    
+    esf = slanted_edge_target.InterpolateESF([-0.5, 0.5],
+                                             [0.0, 1.0]).f  # ideal edge esf for pixels with 100% fill factor
+
     # arrays of positions and corresponding esf values
     x, edge_lsf_pixel = slanted_edge_target.calc_custom_esf(sigma=0.3, pixel_fill_factor=1.0, show_plots=show_plots)
     # a more realistic (custom) esf
     esf = slanted_edge_target.InterpolateESF(x, edge_lsf_pixel).f
-    
-    image_float, _ = slanted_edge_target.make_slanted_curved_edge((N, N), curvature=0.001, 
-                                                               illum_gradient_angle=0.0, 
-                                                               illum_gradient_magnitude=0.0, 
-                                           low_level=0.25, hi_level=0.70, esf=esf, angle=5.0)
+
+    image_float, _ = slanted_edge_target.make_slanted_curved_edge((N, N), curvature=0.001,
+                                                                  illum_gradient_angle=0.0,
+                                                                  illum_gradient_magnitude=0.0,
+                                                                  low_level=0.25, hi_level=0.70, esf=esf, angle=5.0)
     im = image_float
-    
+
     # Display the image in 8 bit grayscale
     nbits = 8
     image_int = np.round((2 ** nbits - 1) * im.clip(0.0, 1.0)).astype(np.uint8)
     image_int = np.stack([image_int for i in range(3)], axis=2)
-    
+
     # Save slanted edge ROI as an image file in the current directory
     current_dir = os.path.abspath(os.path.dirname(__file__))
     save_path = os.path.join(current_dir, "slanted_edge_example.png")
     plt.imsave(save_path, image_int, vmin=0, vmax=255, cmap='gray')
-    
+
     # --------------------------------------------------------------------
     # (This is where you would load your own ROI image from file. Remember to 
     # also remove gamma and to apply white balance if raw images are used from 
     # an image sensor with a Bayer (color filter) pattern.)
-    
+
     # Load slanted edge ROI image from from file
     im = plt.imread("slanted_edge_example.png")
 
@@ -467,23 +466,23 @@ def main():
             # plt.ishow and plt.imsave with cmap='gray' doesn't interpolate properly(!), so we
             # make an explicit grayscale sRGB image instead
             image_int = np.stack([image_int for i in range(3)], axis=2)
+            plt.figure()
             plt.imshow(image_int)
             # plt.imshow(image_int, cmap='gray', vmin=0, vmax=255)
-            plt.show()
 
         print(" ")
         mtf, _ = calc_sfr(sample, show_plots=show_plots, verbose=True)
-        mtf_quadr, _ = calc_sfr(sample, show_plots=show_plots-4, quadratic_fit=True, verbose=True)
+        mtf_quadr, _ = calc_sfr(sample, show_plots=show_plots - 4, quadratic_fit=True, verbose=True)
         print(f"\nNow do the exact same two function calls, but without diagnostic"
               f" plots, to get the true execution speed of the SFR calculation"
               f" from the {N:d} x {N:d} pixel ROI image:")
         # This is how you would call the function in an automated script.
-        # Remember that you can also comment out the "@exection_timer" 
+        # Remember that you can also comment out the "@execution_timer"
         # decorator and skip verbosity (default is False):
         mtf, status = calc_sfr(sample, verbose=True)
         mtf_quadr, status_quadr = calc_sfr(sample, quadratic_fit=True, verbose=True)
         print(" ")
-        
+
         if show_plots >= 1:
             plt.figure()
             plt.plot(mtf[:, 0], mtf[:, 1], '.-', label="linear fit to edge")
@@ -511,7 +510,6 @@ def main():
             plt.ylabel('MTF')
             plt.xlabel('Spatial frequency (cycles/pixel)')
             plt.legend(loc='best')
-            plt.show()
 
     # _______________________________________________________________________________
     # Test with ideal slanted edge, result should be very similar to sinc function for the aperture (black curve)
@@ -528,13 +526,13 @@ def main():
                 # plt.ishow and plt.imsave with cmap='gray' doesn't interpolate properly(!), so we
                 # make an explicit grayscale sRGB image instead
                 image_int = np.stack([image_int for i in range(3)], axis=2)
+                plt.figure()
                 plt.imshow(image_int)
-                plt.show()
 
             mtf_list = []
             oversampling_list = [4, 6, 8]
             for oversampling in oversampling_list:
-                mtf, status = calc_sfr(sample, oversampling=oversampling, show_plots=show_plots-4, verbose=False)
+                mtf, status = calc_sfr(sample, oversampling=oversampling, show_plots=show_plots - 4, verbose=False)
                 mtf_list.append(mtf)
 
             if show_plots:
@@ -564,9 +562,8 @@ def main():
                     noise = 'out noise'
                 plt.title(f'SFR from {shape:s} ideal slanted edge\nwith{noise:s}')
                 plt.legend(loc='best')
-                plt.show()
 
 
 if __name__ == "__main__":
-    main()
-
+    test()
+    plt.show()
