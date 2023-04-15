@@ -11,29 +11,11 @@ this software. If not, see <http://creativecommons.org/publicdomain/zero/1.0/>.
 
 make_ideal_slanted_edge()
 Make an ideal slanted edge passing through the center of the image, with 
-maximum theoretical sharpness for 100% fill factor pixels
-input: image_shape, as a tuple of (cols, rows)
-input: edge angle relative to the vertical axis (degrees), default value is 5°
-input: gray level for the dark side of the edge
-input: gray level for the bright side of the edge
-output: slanted edge image as a numpy array of floats
+maximum theoretical sharpness for 100% fill factor pixels.
 
 make_slanted_curved_edge()
-Make a slanted edge passing through the center of the image, with support for 
-edge curvature, uneven illumination, and arbitrary edge profiles
-input:  image_shape, as a tuple of (cols, rows)
-input:  edge angle relative to the vertical axis (degrees) at midpoint, default value is 5°
-input:  curvature k(y) = f''(y) / (1 + f'(y)^2)^(3/2), where x = f(y) is a 2nd order polynomial describing the edge
-input:  gray level for the dark side of the edge
-input:  gray level for the bright side of the edge
-input:  black level, i.e. gray level corresponding to zero illumination
-input:  illumination gradient angle (degrees), 0 is down, 90 is left, 180 is up
-input:  illumination gradient magnitude, relative change between center of image and edge, can be either
-        negative of positive
-input:  function that returns the edge profile as function of distance, with 0.0 at minus infinity, and 1.0 at
-        positive infinity
-output: slanted edge image as a numpy array of floats
-output: distance to the edge from each pixel as a numpy array of floats
+Make a slanted edge passing through the center of the image, with support for
+edge curvature, uneven illumination, and arbitrary edge profiles.
 """
 
 import numpy as np
@@ -42,9 +24,24 @@ import SFR
 
 def make_ideal_slanted_edge(image_shape=(100, 100), angle=5.0, low_level=0.20, hi_level=0.80,
                             pixel_fill_factor=1.0):
-    # Return slanted edge image as a 2-d Numpy array of float.
-    # angle: angle (degrees) of slanted edge relative to vertical axis
-    # low_level, hi_level: gray levels on either side of edge
+    """
+    Make an ideal slanted edge passing through the center of the image, with maximum theoretical sharpness
+    for 100% fill factor pixels
+
+    Parameters:
+        image_shape: tuple of int
+            (height, width) in units of pixels
+        angle: float
+            edge angle relative to the vertical axis (degrees), default value is 5°
+        low_level: float
+            gray level (arbitrary units) at the dark side of the edge
+        hi_level: float
+            gray level (arbitrary units) at the bright side of the edge
+        pixel_fill_factor: float
+            pixel fill factor, 1.0 gives ideal edge, <1.0 gives aliasing, >1.0 gives blurred edge
+    Returns:
+        slanted edge image as a numpy array of float
+    """
 
     height, width = image_shape
     xx, yy = np.meshgrid(range(0, width), range(0, height))
@@ -53,8 +50,7 @@ def make_ideal_slanted_edge(image_shape=(100, 100), angle=5.0, low_level=0.20, h
 
     # Calculate distance to edge (<0 means pixel is to the left of the edge, 
     # >0 means pixel is to the right)
-    dist_edge = np.cos(-angle * np.pi / 180) * (xx - x_midpoint) + \
-                -np.sin(-angle * np.pi / 180) * (yy - y_midpoint)
+    dist_edge = np.cos(-angle * np.pi / 180) * (xx - x_midpoint) + -np.sin(-angle * np.pi / 180) * (yy - y_midpoint)
 
     dist_edge /= np.sqrt(pixel_fill_factor)
 
@@ -84,17 +80,38 @@ def make_slanted_curved_edge(image_shape=(100, 100), angle=5.0, curvature=0.001,
                              low_level=0.25, hi_level=0.85, black_lvl=0.05,
                              illum_gradient_angle=75.0,
                              illum_gradient_magnitude=+0.05, esf=InterpolateESF([-0.5, 0.5], [0.0, 1.0]).f):
-    # Return a slanted edge image in floating point format, with support for
-    # edge curvature, illumination gradients, and custom edge spread functions.   
-    # image_shape: (height, width) tuple, in units of pixels
-    # angle: c.w. angle (degrees) of slanted edge relative to vertical axis, valid range is [-90.0, 90.0]
-    # curvature: k(y) = f''(y) / (1 + f'(y)^2)^(3/2), where x = f(y) is the equation of the edge
-    # low_level, hi_level: gray levels on either side of edge
-    # black_lvl: gray level corresponding to zero illumination
-    # illum_gradient_angle: illumination gradient direction (degrees), 0 is downward, 90 is to the right
-    # illum_gradient_magnitude: relative illumination change between center of image and edge
-    # esf:  user supplied edge spread function (or edge profile) that takes position (in units pf pixels) as
-    #       input and goes from 0.0 (left) to 1.0 (right)
+    """
+    Make a slanted edge passing through the center of the image, with support for
+    edge curvature, uneven illumination, and custom edge spread functions.
+
+    Parameters:
+        image_shape: tuple of int
+            (height, width) in units of pixels
+        angle: float
+            c.w. angle (degrees) of slanted edge relative to vertical axis, valid range is [-90.0, 90.0],
+            default value is 5°
+        curvature: float
+            curvature k(y) = f''(y) / (1 + f'(y)^2)^(3/2), where x = f(y) is a 2nd order polynomial describing the edge
+        low_level: float
+            gray level (arbitrary units) at dark side of the edge
+        hi_level: float
+            gray level (arbitrary units) at bright side of the edge
+        black_lvl: float
+            gray level corresponding got zero illumination (a.k.a. pedestal)
+        illum_gradient_angle: float
+            illumination gradient direction (degrees), 0 is downward, 90 is left, 180 is up
+        illum_gradient_magnitude: float
+            illumination gradient magnitude, relative illumination change between center of image and edge, can be
+            either negative of positive
+        esf: function
+            function that returns the edge spread profile as function of distance (in units of
+            pixels), with 0.0 at minus infinity, and 1.0 at positive infinity
+    Returns:
+        im: numpy array of floats
+            slanted edge image (2-d)
+        dist_edge: numpy array of floats
+            distance to the edge from each pixel (2-d)
+    """
 
     angle = np.clip(-angle, a_min=-90.0, a_max=90.0)
 
@@ -106,7 +123,7 @@ def make_slanted_curved_edge(image_shape=(100, 100), angle=5.0, curvature=0.001,
     # in mind. Temporarily rotate the image 90° if the edge is more than 45° 
     # from the vertical axis.
     if np.abs(angle) > 45.0:
-        angle_offset = -90.0;
+        angle_offset = -90.0
         image_shape = image_shape[::-1]  # width -> height, and height -> width
     if angle > 45.0:
         step_fctr = -1.0
@@ -119,8 +136,7 @@ def make_slanted_curved_edge(image_shape=(100, 100), angle=5.0, curvature=0.001,
 
     # Describe the curved edge shape as a 2nd order polynomial
     slope = SFR.slope_from_angle(angle + angle_offset)
-    p = SFR.polynomial_from_midpoint_slope_and_curvature(y_midpoint, x_midpoint,
-                                                         slope, curvature * inv_c)
+    p = SFR.polynomial_from_midpoint_slope_and_curvature(y_midpoint, x_midpoint, slope, curvature * inv_c)
 
     # Calculate distance to edge (<0 means pixel is to the left of the edge, 
     # >0 means pixel is to the right)
@@ -198,11 +214,56 @@ def calc_custom_esf(x_length=5.0, x_step=0.01, x_edge=0.0, pixel_fill_factor=1.0
     return x, edge_lsf_pixel
 
 
+def rgb2gray(im_rgb_crop_dark, im_rgb_crop_light, im_rgb):
+    r0 = np.mean(im_rgb_crop_dark[0::2, 0::2])
+    r1 = np.mean(im_rgb_crop_light[0::2, 0::2])
+    g0 = np.mean(im_rgb_crop_dark[0::2, 1::2])
+    g1 = np.mean(im_rgb_crop_light[0::2, 1::2])
+    b0 = np.mean(im_rgb_crop_dark[1::2, 1::2])
+    b1 = np.mean(im_rgb_crop_light[1::2, 1::2])
+
+    k_gr = (g1 - g0) / (r1 - r0)
+    k_gb = (g1 - g0) / (b1 - b0)
+    k_rb = (r1 - r0) / (b1 - b0)
+    pedestal = np.mean([(g0 - k_gr * r0) / (1 - k_gr),
+                        (g1 - k_gr * r1) / (1 - k_gr),
+                        (g0 - k_gb * b0) / (1 - k_gb),
+                        (g1 - k_gb * b1) / (1 - k_gb),
+                        (r0 - k_rb * b0) / (1 - k_rb),
+                        (r1 - k_rb * b1) / (1 - k_rb)])
+
+    x = np.mean([(r1 - pedestal) / (r0 - pedestal),  # x = light / dark luminance ratio
+                 (g1 - pedestal) / (g0 - pedestal),
+                 (b1 - pedestal) / (b0 - pedestal)])
+
+    gain_r = np.mean([r0 - pedestal, (r1 - pedestal) / x])
+    gain_g = np.mean([g0 - pedestal, (g1 - pedestal) / x])
+    gain_b = np.mean([b0 - pedestal, (b1 - pedestal) / x])
+
+    gain_image = np.zeros_like(im_rgb)
+    gain_image[0::2, 0::2] = 1 / gain_r
+    gain_image[0::2, 1::2] = 1 / gain_g
+    gain_image[1::2, 0::2] = 1 / gain_g
+    gain_image[1::2, 1::2] = 1 / gain_b
+
+    return (im_rgb - pedestal) * gain_image
+
+
 if __name__ == '__main__':
     import os
     import matplotlib.pyplot as plt
 
-    for pixel_fill_factor in [1.0, 0.04]:
+
+    def gray2rgb(image, pedestal, gain_r, gain_g, gain_b, cfa_rgb=np.array([[0, 1], [1, 2]])):
+        im_rgb = np.zeros_like(image).astype(float)
+        im_rgb[0::2, 0::2] = image[0::2, 0::2] * gain_r + pedestal
+        im_rgb[0::2, 1::2] = image[0::2, 1::2] * gain_g + pedestal
+        im_rgb[1::2, 0::2] = image[1::2, 0::2] * gain_g + pedestal
+        im_rgb[1::2, 1::2] = image[1::2, 1::2] * gain_b + pedestal
+        return im_rgb
+
+
+    for pixel_fill_factor in [4.0, 1.0, 0.04]:
         # Create an ideal slanted edge image with default settings
         image_float = make_ideal_slanted_edge(pixel_fill_factor=pixel_fill_factor)
 
@@ -210,9 +271,7 @@ if __name__ == '__main__':
         nbits = 8
         image_int = np.round((2 ** nbits - 1) * image_float.clip(0.0, 1.0)).astype(np.uint8)
 
-        # TODO: plt.imshow and plt.imsave() with cmap='gray' doesn't interpolate
-        # properly(!), leaving histogram gaps and neighboring peaks, so we
-        # make an explicitly grayscale MxNx3 RGB image instead
+        # TODO: plt.imshow and plt.imsave() with cmap='gray' doesn't interpolate properly(!), leaving histogram gaps and neighboring peaks, so we make an explicitly grayscale MxNx3 RGB image instead
         image_int = np.stack([image_int for i in range(3)], axis=2)
         plt.figure()
         plt.imshow(image_int)
@@ -223,6 +282,27 @@ if __name__ == '__main__':
         save_path = os.path.join(current_dir, "ideal_slanted_edge_example.png")
         plt.imsave(save_path, image_int, vmin=0, vmax=255, cmap='gray')
 
+        # Test RGB decoding / white balancing
+        im_gray_input = image_int[:, :, 0].astype(float)
+        im_gray_input = np.random.poisson(im_gray_input * 1e1) / 1e1  # add noise
+        plt.figure()
+        plt.title('im_gray_input')
+        plt.imshow(im_gray_input, cmap='gray', vmin=0.0, vmax=1.2 * np.max(im_gray_input))
+
+        pedestal = 19.0
+        gain_r, gain_g, gain_b = 1.1, 1.8, 1.3
+        im_rgb = gray2rgb(im_gray_input, pedestal, gain_r, gain_g, gain_b)  # simulate RGB image
+        plt.figure()
+        plt.title('im_rgb_input')
+        plt.imshow(im_rgb, cmap='gray')
+
+        im_rgb_crop_dark = im_rgb[0:20, 0:20]
+        im_rgb_crop_light = im_rgb[0:20, -20:-1]
+        im_gray = rgb2gray(im_rgb_crop_dark, im_rgb_crop_light, im_rgb)  # calc. pedestal and white balance image
+        plt.figure()
+        plt.title('im_gray')
+        plt.imshow(im_gray, cmap='gray', vmin=0.0, vmax=5.0)
+
     # --------------------------------------------------------------------------------
     # Create a curved edge image with a custom esf
     esf = InterpolateESF([-0.5, 0.5], [0.0, 1.0]).f  # ideal edge esf for pixels with 100% fill factor
@@ -232,18 +312,19 @@ if __name__ == '__main__':
 
     esf = InterpolateESF(x, edge_lsf_pixel).f  # a more realistic (custom) esf
 
-    for angle in range(-90, 90 + 1, 10):
-        image_float, _ = make_slanted_curved_edge((80, 100), illum_gradient_angle=45.0,
-                                                  illum_gradient_magnitude=4 * 0.15, curvature=-2 * 0.001,
-                                                  low_level=0.25, hi_level=0.70, esf=esf, angle=angle)
+    if 0:
+        for angle in range(-90, 90 + 1, 10):
+            image_float, _ = make_slanted_curved_edge((80, 100), illum_gradient_angle=45.0,
+                                                      illum_gradient_magnitude=4 * 0.15, curvature=-2 * 0.001,
+                                                      low_level=0.25, hi_level=0.70, esf=esf, angle=angle)
 
-        # Display the image in 8 bit grayscale
-        nbits = 8
-        image_int = np.round((2 ** nbits - 1) * image_float.clip(0.0, 1.0)).astype(np.uint8)
-        image_int = np.stack([image_int for i in range(3)], axis=2)
-        plt.figure()
-        plt.title(f"angle: {angle:.1f}°")
-        plt.imshow(image_int)
+            # Display the image in 8 bit grayscale
+            nbits = 8
+            image_int = np.round((2 ** nbits - 1) * image_float.clip(0.0, 1.0)).astype(np.uint8)
+            image_int = np.stack([image_int for i in range(3)], axis=2)
+            plt.figure()
+            plt.title(f"angle: {angle:.1f}°")
+            plt.imshow(image_int)
 
     # Save as an image file in the current directory
     current_dir = os.path.abspath(os.path.dirname(__file__))
