@@ -136,11 +136,11 @@ def make_slanted_curved_edge(image_shape=(100, 100), angle=5.0, curvature=0.001,
 
     # Describe the curved edge shape as a 2nd order polynomial
     slope = SFR.slope_from_angle(angle + angle_offset)
-    p = SFR.polynomial_from_midpoint_slope_and_curvature(y_midpoint, x_midpoint, slope, curvature * inv_c)
+    p = SFR.SFR().polynomial_from_midpoint_slope_and_curvature(y_midpoint, x_midpoint, slope, curvature * inv_c)
 
     # Calculate distance to edge (<0 means pixel is to the left of the edge, 
     # >0 means pixel is to the right)
-    dist_edge = SFR.calc_distance(image_shape, p, quadratic_fit=True)
+    dist_edge = SFR.SFR(quadratic_fit=True).calc_distance(image_shape, p)
 
     # Reverse step direction if edge angle is in the lower two quadrants (between 
     # 90 and 270 degrees)
@@ -159,9 +159,8 @@ def make_slanted_curved_edge(image_shape=(100, 100), angle=5.0, curvature=0.001,
     # Apply illumination gradient
     if illum_gradient_magnitude != 0.0:
         slope_gradient = SFR.slope_from_angle(illum_gradient_angle - 90.0)
-        p = SFR.polynomial_from_midpoint_slope_and_curvature(y_midpoint, x_midpoint,
-                                                             slope_gradient, 0.0)
-        illum_gradient_dist = SFR.calc_distance(image_shape, p, quadratic_fit=False)
+        p = SFR.SFR().polynomial_from_midpoint_slope_and_curvature(y_midpoint, x_midpoint, slope_gradient, 0.0)
+        illum_gradient_dist = SFR.SFR(quadratic_fit=False).calc_distance(image_shape, p)
         illum_gradient = 1 + illum_gradient_dist / (image_shape[0] / 2) * illum_gradient_magnitude
         im = np.clip((im - black_lvl) * illum_gradient, a_min=0.0, a_max=None) + black_lvl
 
@@ -214,39 +213,31 @@ def calc_custom_esf(x_length=5.0, x_step=0.01, x_edge=0.0, pixel_fill_factor=1.0
     return x, edge_lsf_pixel
 
 
-def rgb2gray(im_rgb_crop_dark, im_rgb_crop_light, im_rgb):
-    r0 = np.mean(im_rgb_crop_dark[0::2, 0::2])
-    r1 = np.mean(im_rgb_crop_light[0::2, 0::2])
-    g0 = np.mean(im_rgb_crop_dark[0::2, 1::2])
-    g1 = np.mean(im_rgb_crop_light[0::2, 1::2])
-    b0 = np.mean(im_rgb_crop_dark[1::2, 1::2])
-    b1 = np.mean(im_rgb_crop_light[1::2, 1::2])
+def rgb2gray(im_rgb, im_0, im_1):
+    c_0 = [np.mean(im_0[i::2, j::2]) for i, j in ((0, 0), (0, 1), (1, 0), (1, 1))]
+    c_1 = [np.mean(im_1[i::2, j::2]) for i, j in ((0, 0), (0, 1), (1, 0), (1, 1))]
 
-    k_gr = (g1 - g0) / (r1 - r0)
-    k_gb = (g1 - g0) / (b1 - b0)
-    k_rb = (r1 - r0) / (b1 - b0)
-    pedestal = np.mean([(g0 - k_gr * r0) / (1 - k_gr),
-                        (g1 - k_gr * r1) / (1 - k_gr),
-                        (g0 - k_gb * b0) / (1 - k_gb),
-                        (g1 - k_gb * b1) / (1 - k_gb),
-                        (r0 - k_rb * b0) / (1 - k_rb),
-                        (r1 - k_rb * b1) / (1 - k_rb)])
+    # Define and solve the following overdetermined equation system:
+    # c_1 - pedestal = lum_ratio * (c_0 - pedestal)
+    # Solve Ax = b for x, where x = [pedestal * (1 - lum_ratio), lum_ratio]
+    A = np.array([[1, c_0[i]] for i in range(4)])
+    b = np.array([c_1[i] for i in range(4)])
+    x, _, _, _ = np.linalg.lstsq(A, b, rcond=None)
+    lum_ratio = x[1]  # luminance ratio between light and dark sides of the edge
+    pedestal = x[0] / (1 - lum_ratio)  # estimate the pedestal that is added to the RGB image (not affected by RGB gain)
 
-    x = np.mean([(r1 - pedestal) / (r0 - pedestal),  # x = light / dark luminance ratio
-                 (g1 - pedestal) / (g0 - pedestal),
-                 (b1 - pedestal) / (b0 - pedestal)])
+    # Estimate dark side RGB signal without the pedestal
+    c_0_p = [np.mean([c_0[i] - pedestal, (c_1[i] - pedestal) / lum_ratio]) for i in range(4)]
 
-    gain_r = np.mean([r0 - pedestal, (r1 - pedestal) / x])
-    gain_g = np.mean([g0 - pedestal, (g1 - pedestal) / x])
-    gain_b = np.mean([b0 - pedestal, (b1 - pedestal) / x])
+    # Define a reverse gain image that will flatten the RGB image, and normalize it to the
+    # green channel (i.e. as if all pixels were green in an RGB image)
+    c_p_max = np.max(c_0_p)
+    rev_gain_image = np.zeros_like(im_rgb)
+    for k, (i, j) in enumerate(((0, 0), (0, 1), (1, 0), (1, 1))):
+        rev_gain_image[i::2, j::2] = c_p_max / c_0_p[k]
 
-    gain_image = np.zeros_like(im_rgb)
-    gain_image[0::2, 0::2] = 1 / gain_r
-    gain_image[0::2, 1::2] = 1 / gain_g
-    gain_image[1::2, 0::2] = 1 / gain_g
-    gain_image[1::2, 1::2] = 1 / gain_b
-
-    return (im_rgb - pedestal) * gain_image
+    # return flattened image
+    return (im_rgb - pedestal) * rev_gain_image + pedestal, pedestal
 
 
 if __name__ == '__main__':
@@ -263,15 +254,22 @@ if __name__ == '__main__':
         return im_rgb
 
 
-    for pixel_fill_factor in [4.0, 1.0, 0.04]:
+    pedestal = 19.0
+    gain_r, gain_g, gain_b = 1.1, 1.8, 1.3
+    seed = 1
+    s = 40
+    sfr = SFR.SFR(show_plots=0, quadratic_fit=False)
+    for pixel_fill_factor in [4.0, 1.0, 0.06]:
         # Create an ideal slanted edge image with default settings
-        image_float = make_ideal_slanted_edge(pixel_fill_factor=pixel_fill_factor)
+        image_float = make_ideal_slanted_edge(image_shape=(100, 100), low_level=0.20,
+                                              pixel_fill_factor=pixel_fill_factor)
 
         # Display the image in 8 bit grayscale
         nbits = 8
         image_int = np.round((2 ** nbits - 1) * image_float.clip(0.0, 1.0)).astype(np.uint8)
 
-        # TODO: plt.imshow and plt.imsave() with cmap='gray' doesn't interpolate properly(!), leaving histogram gaps and neighboring peaks, so we make an explicitly grayscale MxNx3 RGB image instead
+        # TODO: plt.imshow() and plt.imsave() with cmap='gray' doesn't interpolate properly(!),
+        #  leaving histogram gaps and neighboring peaks, so we make an explicitly grayscale MxNx3 RGB image instead
         image_int = np.stack([image_int for i in range(3)], axis=2)
         plt.figure()
         plt.imshow(image_int)
@@ -282,26 +280,45 @@ if __name__ == '__main__':
         save_path = os.path.join(current_dir, "ideal_slanted_edge_example.png")
         plt.imsave(save_path, image_int, vmin=0, vmax=255, cmap='gray')
 
-        # Test RGB decoding / white balancing
+        # Add noise
         im_gray_input = image_int[:, :, 0].astype(float)
-        im_gray_input = np.random.poisson(im_gray_input * 1e1) / 1e1  # add noise
+        np.random.seed(seed)
+        # im_gray_input = np.random.poisson(im_gray_input * 1e1) / 1e1
+        im_gray_input = im_gray_input + 0.3 * np.sqrt(im_gray_input) * np.random.normal(
+            size=im_gray_input.shape)
         plt.figure()
         plt.title('im_gray_input')
-        plt.imshow(im_gray_input, cmap='gray', vmin=0.0, vmax=1.2 * np.max(im_gray_input))
+        plt.imshow(im_gray_input, cmap='gray', vmin=0.0, vmax=255.0)
+        im_save = np.stack([im_gray_input.clip(0.0, 255.0).astype(np.uint8) for i in range(3)], axis=2)
+        plt.imsave(os.path.join(current_dir, "im_gray_input.png"), im_save, vmin=0, vmax=255, cmap='gray')
 
-        pedestal = 19.0
-        gain_r, gain_g, gain_b = 1.1, 1.8, 1.3
+        # Test RGB decoding / white balancing
         im_rgb = gray2rgb(im_gray_input, pedestal, gain_r, gain_g, gain_b)  # simulate RGB image
         plt.figure()
         plt.title('im_rgb_input')
         plt.imshow(im_rgb, cmap='gray')
 
-        im_rgb_crop_dark = im_rgb[0:20, 0:20]
-        im_rgb_crop_light = im_rgb[0:20, -20:-1]
-        im_gray = rgb2gray(im_rgb_crop_dark, im_rgb_crop_light, im_rgb)  # calc. pedestal and white balance image
+        mtf, status = sfr.calc_sfr(im_rgb)
+
+        # Select dark and light flat sections on either side of the edge
+        im_rgb_crop_dark = im_rgb[0:s, 0:s]
+        im_rgb_crop_light = im_rgb[0:s, -(s + s % 2):-1]
+        # White balance image (normalized to G channel) and estimate pedestal
+        im_gray, pedestal_estim = rgb2gray(im_rgb, im_rgb_crop_dark, im_rgb_crop_light)
         plt.figure()
-        plt.title('im_gray')
-        plt.imshow(im_gray, cmap='gray', vmin=0.0, vmax=5.0)
+        plt.title('im gray whitebalanced from RGB, normalized, pedestal removed')
+        im_gray = (im_gray - pedestal_estim) / gain_g
+        plt.imshow(im_gray, cmap='gray', vmin=0.0, vmax=255.0)
+        im_save2 = np.stack([im_gray.clip(0.0, 255.0).astype(np.uint8) for i in range(3)], axis=2)
+        plt.imsave(os.path.join(current_dir, "im_gray_whitebalanced.png"), im_save2, vmin=0, vmax=255, cmap='gray')
+
+    im_diff = np.unique(im_save2.astype(int) - im_save.astype(int))
+
+    im_ratio = im_gray / im_gray_input
+    size_str = f'white balancing ROIs: {s} x {s} pixels'
+    pedestal_str = f'estimated pedestal: {pedestal_estim:.1f}, true pedestal: {pedestal:.1f}'
+    errors_str = f'errors in whitebalanced edge ROI image, compared to gray scale original: {im_diff}'
+    print(f'{size_str}; {pedestal_str}; {errors_str}')
 
     # --------------------------------------------------------------------------------
     # Create a curved edge image with a custom esf

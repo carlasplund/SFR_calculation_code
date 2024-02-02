@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-SFR.m - Calculate spatial frequency response (SFR) for a slanted edge.
+File SFR.m - Calculate spatial frequency response (SFR) for a slanted edge.
 Written in 2022 by Carl Asplund carl.asplund@eclipseoptics.com
 
 To the extent possible under law, the author(s) have dedicated all copyright 
@@ -10,18 +10,27 @@ You should have received a copy of the CC0 Public Domain Dedication along with
 this software. If not, see <http://creativecommons.org/publicdomain/zero/1.0/>.
 
 
-SFR.calc_sfr()
-Calculate spatial frequency response (SFR), a.k.a. MTF, for a slanted edge.
-* input: image patch with slanted edge to be analyzed (2-d Numpy array of float)
-* input (optional): oversampling (integer), default is 4
-* input (optional): show_plots (integer), a kind of "verbosity" for plots, default is 0, i.e. no plots
-* input (optional): angle (degrees) of the edge, if not specified a fitted value will be used 
-* input (optional): offset (px) of the edge, if not specified a fitted value will be used 
-* input (optional): quadratic_fit, if True fit a second order polynomial to the slanted edge
-* output: MTF organized as a 2-d array where first column is spatial frequency, and second column contains MTF values
-* output: status dict with fitted edge angle (c.w. from vertical), offset, image rotation etc.
+Class SFR.
 
-NB: SFR calculations will fail for edge angles of 0°, 45°, and 90° (an inherent limitation of the method)
+This is the class for the spatial frequency calculation. The constructor takes these optional arguments:
+    oversampling (integer), default is 4:
+        oversampling used in the calculation of the ESF profile
+    show_plots (integer), default is 0:
+        a kind of "verbosity" for plots, "0" means no plots
+    difference_scheme (string: 'backward', 'central'), default is 'central'
+        differentiation scheme used in determining the edge position centroids and for calculating
+        the line spread function (LSF) from the edge spread function (ESF)
+    verbose (boolean), default is False
+        if True, print messages with information about intermediate steps in the SFR calculation
+    return_fig (boolean), default is False
+        if True, the method calc_sfr() returns also a handle to a figure with the ESF profile
+    quadratic_fit (boolean), default is True
+        if True, fit a second order polynomial to the slanted edge, otherwise fit a straight edge
+
+Usage:
+    import SFR  # import this module (SFR.py)
+    sfr = SFR.SFR()  # set up an SFR object using the SFR() constructor
+    mtf, status = sfr.calc_sfr(image)  # use the calc_sfr() method to obtain the MTF results for the supplied image
 """
 
 import matplotlib.pyplot as plt
@@ -29,7 +38,7 @@ import numpy as np
 import scipy.signal
 
 import slanted_edge_target
-from execution_timer import execution_timer  # (optional) timing module
+# from execution_timer import execution_timer  # (optional) timing module
 
 
 def angle_from_slope(slope):
@@ -40,530 +49,366 @@ def slope_from_angle(angle):
     return np.tan(np.deg2rad(angle))
 
 
-def centroid(arr, conv_kernel=3, win_width=5):
-    height, width = arr.shape
+class SFR:
+    def __init__(self, oversampling=4, show_plots=0, difference_scheme='central', verbose=False,
+                 return_fig=False, quadratic_fit=True):
+        self.oversampling = oversampling
+        self.show_plots = show_plots
+        self.difference_scheme = difference_scheme
+        self.verbose = verbose
+        self.return_fig = return_fig
+        self.quadratic_fit = quadratic_fit
+        self.lsf_centering_kernel_sz = 9
+        self.win_width_factor = 1.5
+        self.lsf_threshold = 0.10
+        if self.difference_scheme == 'backward':
+            self.diff_kernel = np.array([1.0, -1.0])
+            self.diff_offset = -0.5
+            self.diff_ft = 4  # factor used in the correction of the numerical derivation
+        elif self.difference_scheme == 'central':
+            self.diff_kernel = np.array([0.5, 0.0, -0.5])
+            self.diff_offset = 0.0
+            self.diff_ft = 2
+        self.conv_kernel = 3
+        self.win_width = 5
 
-    win = np.zeros(arr.shape)
-    for i in range(height):
-        win_c = np.argmax(np.abs(np.convolve(arr[i, :], np.ones(conv_kernel), 'same')))
-        win[i, win_c - win_width:win_c + win_width] = 1.0
+    def set_oversampling(self, oversampling):
+        self.oversampling = oversampling
 
-    x, _ = np.meshgrid(np.arange(width), np.arange(height))
-    sum_arr = np.sum(arr * win, axis=1)
-    sum_arr_x = np.sum(arr * win * x, axis=1)
+    def centroid(self, arr):
+        height, width = arr.shape
 
-    # The following division will result in nan for any row that lack an
-    # edge transition:
-    with np.errstate(divide='ignore', invalid='ignore'):
-        return sum_arr_x / sum_arr  # divide-by-zero warnings are suppressed
+        win = np.zeros(arr.shape)
+        for i in range(height):
+            win_c = np.argmax(np.abs(np.convolve(arr[i, :], np.ones(self.conv_kernel), 'same')))
+            win[i, win_c - self.win_width:win_c + self.win_width] = 1.0
 
+        x, _ = np.meshgrid(np.arange(width), np.arange(height))
+        sum_arr = np.sum(arr * win, axis=1)
+        sum_arr_x = np.sum(arr * win * x, axis=1)
 
-def differentiate(arr, kernel):
-    if len(arr.shape) == 2:
-        # Use 2-d convolution, but with a one-dimensional (row-oriented) kernel
-        out = scipy.signal.convolve2d(arr, [kernel], 'same', 'symm')
-    else:
-        # Input is a one-dimensional array
-        out = np.convolve(arr, kernel, 'same')
-        # The first element is not valid since there is no 'symm' option, 
-        # replace it with 0.0 (thereby maintaining the input array size)
-        out[0] = 0.0
-    return out
+        # By design, the following division will result in nan for any row that lack an
+        # edge transition
+        with np.errstate(divide='ignore', invalid='ignore'):
+            return sum_arr_x / sum_arr  # suppress divide-by-zero warnings
 
+    def differentiate(self, arr):
+        if len(arr.shape) == 2:
+            # Use 2-d convolution, but with a one-dimensional (row-oriented) kernel
+            out = scipy.signal.convolve2d(arr, [self.diff_kernel], 'same', 'symm')
+        else:
+            # Input is a one-dimensional array
+            out = np.convolve(arr, self.diff_kernel, 'same')
+            # The first element is not valid since there is no 'symm' option,
+            # replace it with 0.0 (thereby maintaining the input array size)
+            out[0] = 0.0
+        return out
 
-def find_edge(centr, patch_shape, rotated, angle=None, show_plots=False, verbose=False):
-    # Find 2nd and 1st order polynomials that best approximate the
-    # edge shape given by the vector of LSF centroids supplied  in "centr"
-    #
-    # input
-    # centr: centroid location for each row
-    # patch_shape: tuple with (height, width) info about the patch
-    # angle: force this edge angle (degrees from vertical line) to be used in the linear fit
-    # output
-    # pcoefs: 2nd order polynomial coefs from the least squares fit to the edge
-    # [slope, offset]: polynomial coefs from the liner fit to the edge
+    def find_edge(self, centr, patch_shape, rotated):
+        # Find 2nd and 1st order polynomials that best approximate the
+        # edge shape given by the vector of LSF centroids supplied  in "centr"
+        #
+        # input
+        #   centr: centroid location for each row
+        #   patch_shape: tuple with (height, width) info about the patch
+        # output
+        #   pcoefs: 2nd order polynomial coefs from the least squares fit to the edge
+        #   [slope, offset]: polynomial coefs from the linear fit to the edge
 
-    # Weed out positions in the vector of centroid values that 
-    # contain nan or inf. These positions represent rows that lack
-    # an edge transition. Remove also the first and last values.
-    idx = np.where(np.isfinite(centr))[0][1:-1]
+        # Weed out positions in the vector of centroid values that
+        # contain nan or inf. These positions represent rows that lack
+        # an edge transition. Remove also the first and last values.
+        idx = np.where(np.isfinite(centr))[0][1:-1]
 
-    # Find the location and direction of the edge by fitting a line to the 
-    # centroids on the form x = y*slope + offset
-    if angle is None:
+        # Find the location and direction of the edge by fitting a line to the
+        # centroids on the form x = y*slope + offset
         slope, offset = np.polyfit(idx, centr[idx], 1)
-    else:
-        slope = slope_from_angle(angle)
-        offset = np.polyfit(idx, centr[idx] - slope * idx, 0)
 
-    # pcoefs contains quadratic polynomial coefficients for the x-coordinate
-    # of the curved edge as a function of the y-coordinate: 
-    # x = pcoefs[0] * y**2 + pcoefs[1] * y + pcoefs[2]
-    pcoefs = np.polyfit(idx, centr[idx], 2)
-
-    if show_plots >= 5:
-        verbose and print("showing plots!")
-        fig, ax = plt.subplots()
-        if rotated:
-            ax.plot(idx, patch_shape[1] - centr[idx], '.k', label="centroids")
-            ax.plot(idx, patch_shape[1] - np.polyval([slope, offset], idx), '-', label="linear fit")
-            ax.plot(idx, patch_shape[1] - np.polyval(pcoefs, idx), '--', label="quadratic fit")
-            ax.set_xlim([0, patch_shape[0]])
-            ax.set_ylim([0, patch_shape[1]])
-        else:
-            ax.plot(centr[idx], idx, '.k', label="centroids")
-            ax.plot(np.polyval([slope, offset], idx), idx, '-', label="linear fit")
-            ax.plot(np.polyval(pcoefs, idx), idx, '--', label="quadratic fit")
-            ax.set_xlim([0, patch_shape[1]])
-            ax.set_ylim([0, patch_shape[0]])
-        ax.set_aspect('equal', 'box')
-        ax.legend(loc='best')
-        ax.invert_yaxis()
-        # plt.show()
-
-    return pcoefs, slope, offset
-
-
-def midpoint_slope_and_curvature_from_polynomial(a, b, c, y0, y1):
-    # Describe input 2nd degree polynomial f(y) = a*y**2 + b*y + c in
-    # terms of midpoint, slope (at midpoint), and curvature (at midpoint)
-    y_mid = (y1 + y0) / 2
-    x_mid = a * y_mid ** 2 + b * y_mid + c
-    # Calculated slope as first derivative of x = f(y) at y = y_mid
-    slope = 2 * a * y_mid + b
-    # Calculate the curvature as k(y) = f''(y) / (1 + f'(y)^2)^(3/2)
-    curvature = 2 * a / (1 + slope ** 2) ** (3 / 2)
-    return y_mid, x_mid, slope, curvature
-
-
-def polynomial_from_midpoint_slope_and_curvature(y_mid, x_mid, slope, curvature):
-    # Calculate a 2nd degree polynomial x = f(y) = a*y**2 + b*y + c that passes
-    # through the midpoint (x_mid, y_mid) with the given slope and curvature 
-    a = curvature * (1 + slope ** 2) ** (3 / 2) / 2
-    b = slope - 2 * a * y_mid
-    c = x_mid - a * y_mid ** 2 - b * y_mid
-    return [a, b, c]
-
-
-def cubic_solver(a, b, c, d):
-    # Solve the equation a*x**3 + b*x**2 + c*x + d = 0 for a 
-    # real-valued root x by Cardano's method
-    # (https://en.wikipedia.org/wiki/Cubic_equation#Cardano's_formula)
-
-    p = (3 * a * c - b ** 2) / (3 * a ** 2)
-    q = (2 * b ** 3 - 9 * a * b * c + 27 * a ** 2 * d) / (27 * a ** 3)
-
-    # A real root exists if 4 * p**3 + 27 * q**2 > 0
-    sr = np.sqrt(q ** 2 / 4 + p ** 3 / 27)
-    t = np.cbrt(-q / 2 + sr) + np.cbrt(-q / 2 - sr)
-    x = t - b / (3 * a)
-    return x
-
-
-def dot(a, b):
-    return a[0] * b[0] + a[1] * b[1]
-
-
-# @execution_timer
-def calc_distance(data_shape, p, quadratic_fit=False, verbose=False):
-    # Calculate the distance (with sign) from each point (x, y) in the
-    # image patch "data" to the slanted edge described by the polynomial p.
-    # It is assumed that the edge is approximately vertically orientated
-    # (between -45° and 45° from the vertical direction).
-    # Distances to points to the left of the edge are negative, and positive 
-    # to points to the right of the edge.
-    x, y = np.meshgrid(range(data_shape[1]), range(data_shape[0]))
-
-    verbose and print(f'quadratic fit: {str(quadratic_fit):s}')
-
-    if not quadratic_fit or p[0] == 0.0:
-        slope, offset = p[1], p[2]  # use linear fit to edge
-        a, b, c = 1, -slope, -offset
-        a_b = np.sqrt(a ** 2 + b ** 2)
-
-        # |ax+by+c| / |a_b| is the distance from (x,y) to the slanted edge:
-        dist = (a * x + b * y + c) / a_b
-    else:
-        # Define a cubic polynomial equation for the y-coordinate
-        # y0 at the point (x0, y0) on the curved edge that is closest to (x, y)
-        d = -y + p[1] * p[2] - x * p[1]
-        c = 1 + p[1] ** 2 + 2 * p[2] * p[0] - 2 * x * p[0]
-        b = 3 * p[1] * p[0]
-        a = 2 * p[0] ** 2
-
-        if p[0] == 0.0:
-            y0 = -d / c  # solution if edge is straight (quadratic term is zero)
-        else:
-            y0 = cubic_solver(a, b, c, d)  # edge is curved
-
-        x0 = p[0] * y0 ** 2 + p[1] * y0 + p[2]
-        dxx_dyy = np.array(2 * p[0] * y0 + p[1])  # slope at (x0, y0)
-        r2 = dot([1, -dxx_dyy], [1, -dxx_dyy])
-        # distance between (x, y) and (x0, y0) along normal to curve at (x0, y0)
-        dist = dot([x - x0, y - y0], [1, -dxx_dyy]) / np.sqrt(r2)
-    return dist
-
-
-# @execution_timer
-def project_and_bin(data, dist, oversampling, verbose=True):
-    # p contains quadratic polynomial coefficients for the x-coordinate
-    # of the curved edge as a function of the y-coordinate: 
-    # x = p[0]*y**2 + p[1]*y + p[2]
-
-    # Create a matrix "bins" where each element represents the bin index of the 
-    # corresponding image pixel in "data":
-    bins = np.round(dist * oversampling).astype(int)
-    bins = bins.flatten()
-    bins -= np.min(bins)  # add an offset so that bins start at 0
-
-    esf = np.zeros(np.max(bins) + 1)  # Edge spread function
-    cnts = np.zeros(np.max(bins) + 1).astype(int)
-    data_flat = data.flatten()
-    for b_indx, b_sorted in zip(np.argsort(bins), np.sort(bins)):
-        esf[b_sorted] += data_flat[b_indx]  # Collect pixel contributions in this bin
-        cnts[b_sorted] += 1  # Keep a tab of how many contributions were made to this bin
-
-    # Calculate mean by dividing by the number of contributing pixels. Avoid
-    # division by zero, in case there are bins with no content.
-    esf[cnts > 0] /= cnts[cnts > 0]
-    if np.any(cnts == 0):
-        if verbose:
-            print("Warning: esf bins with zero pixel contributions were found. Results may be inaccurate.")
-            print(f"Try reducing the oversampling factor, which currently is {oversampling:d}.")
-        # Try to save the situation by patching in values in the empty bins if possible
-        patch_cntr = 0
-        for i in np.where(cnts == 0)[0]:  # loop through all empty bin locations
-            j = [i - 1, i + 1]  # indices of nearest neighbors
-            if j[0] < 0:  # Is left neighbor index outside esf array?
-                j = j[1]
-            elif j[1] == len(cnts):  # Is right neighbor index outside esf array?
-                j = j[0]
-            if np.all(cnts[j] > 0):  # Now, if neighbor bins are non-empty
-                esf[i] = np.mean(esf[j])  # use the interpolated value
-                patch_cntr += 1
-        if patch_cntr > 0 and verbose:
-            print(f"Values in {patch_cntr:d} empty ESF bins were patched by "
-                  f"interpolation between their respective nearest neighbors.")
-    return esf
-
-
-def peak_width(y, rel_threshold):
-    # Find width of peak in y that is above a certain fraction of the maximum value
-    val = np.abs(y)
-    val_threshold = rel_threshold * np.max(val)
-    indices = np.where(val - val_threshold > 0.0)[0]
-    return indices[-1] - indices[0]
-
-
-def filter_window(lsf, oversampling, lsf_centering_kernel_sz=9,
-                  win_width_factor=1.5, lsf_threshold=0.10):
-    # The window ('hann_win') returned by this function will be used as a filter 
-    # on the LSF signal during the MTF calculation to reduce noise
-
-    nn0 = 20 * oversampling  # sample range to be used for the FFT, intial guess
-    mid = len(lsf) // 2
-    i1 = max(0, mid - nn0)
-    i2 = min(2 * mid, mid + nn0)
-    nn = (i2 - i1) // 2  # sample range to be used, final 
-
-    # Filter LSF curve with a uniform kernel to better find center and 
-    # determine an appropriate Hann window width for noise reduction
-    lsf_conv = np.convolve(lsf[i1:i2], np.ones(lsf_centering_kernel_sz), 'same')
-
-    # Base Hann window half width on the width of the filtered LSF curve
-    hann_hw = max(np.round(win_width_factor * peak_width(lsf_conv, lsf_threshold)).astype(int), 5 * oversampling)
-
-    bin_c = np.argmax(np.abs(lsf_conv))  # center bin, corresponding to LSF max
-
-    # Construct Hann window centered over the LSF peak, crop if necessary to
-    # the range [0, 2*nn]
-    crop_l = max(hann_hw - bin_c, 0)
-    crop_r = min(2 * nn - (hann_hw + bin_c), 0)
-    hann_win = np.zeros(2 * nn)  # default value outside Hann function
-    hann_win[bin_c - hann_hw + crop_l:bin_c + hann_hw + crop_r] = \
-        np.hanning(2 * hann_hw)[crop_l:2 * hann_hw + crop_r]
-    return hann_win, 2 * hann_hw, [i1, i2]
-
-
-def calc_mtf(lsf, hann_win, idx, oversampling, diff_ft):
-    # Calculate MTF using the LSF as input and use the supplied window function 
-    # as filter to remove high frequency noise originating in regions far from 
-    # the edge
-
-    i1, i2 = idx
-    mtf = np.abs(np.fft.fft(lsf[i1:i2] * hann_win))
-    nn = (i2 - i1) // 2
-    mtf = mtf[:nn]
-    mtf /= mtf[0]  # normalize to zero spatial frequency 
-    f = np.arange(0, oversampling / 2, oversampling / nn / 2)  # spatial frequencies (cy/px)
-    # Compensate for finite impulse response of the numerical differentiaion
-    # step used to derive the LSF from the ESF
-    # NB: This compensation function is incorrect in both ISO 12233:2014 
-    # and ISO 12233:2017, Annex D
-    mtf *= (1 / np.sinc(4 * f / (diff_ft * oversampling))).clip(0.0, 10.0)
-    return np.column_stack((f, mtf))
-
-
-@execution_timer  # call to timing module, comment out if not used
-def calc_sfr(image, oversampling=4, show_plots=0, offset=None, angle=None,
-             difference_scheme='central', verbose=False, return_fig=False,
-             quadratic_fit=False):
-    """"
-    Calculate spectral response function (SFR)
-    """
-    # TODO: apply Hann (or Hamming) window before calculating centroids, or
-    # do a second pass after find_edge with windowing, centroids, and find_edge
-    if difference_scheme == 'backward':
-        diff_kernel = np.array([1.0, -1.0])
-        diff_offset = -0.5
-        diff_ft = 4  # factor used in the correction of the numerical derivation
-    elif difference_scheme == 'central':
-        diff_kernel = np.array([0.5, 0.0, -0.5])
-        diff_offset = 0.0
-        diff_ft = 2
-
-    # Calculate centroids for the edge transition of each row
-    sample_diff = differentiate(image, diff_kernel)
-    centr = centroid(sample_diff) + diff_offset
-
-    # Calculate centroids also for the 90° right rotated image
-    image_rot90 = image.T[:, ::-1]  # rotate by transposing and mirroring
-    sample_diff = differentiate(image_rot90, diff_kernel)
-    centr_rot = centroid(sample_diff) + diff_offset
-
-    # Use rotated image if it results in fewer rows without edge transitions
-    if np.sum(np.isnan(centr_rot)) < np.sum(np.isnan(centr)):
-        verbose and print("Rotating image by 90°")
-        image, centr = image_rot90, centr_rot
-        rotated = True
-    else:
-        rotated = False
-
-    # Finds polynomials that describes the slanted edge by least squares 
-    # regression to the centroids:
-    #  - pcoefs are the 2nd order fit coefficients
-    #  - [slope, offset] are the first order (linear) fit coefficients for the same edge
-    pcoefs, slope, offset = find_edge(centr, image.shape, rotated, angle=angle,
-                                      show_plots=show_plots, verbose=verbose)
-
-    pcoefs = [0.0, slope, offset] if not quadratic_fit else pcoefs
-
-    # Calculate distance (with sign) from each point (x, y) in the
-    # image patch "data" to the slanted edge
-    dist = calc_distance(image.shape, pcoefs, quadratic_fit=quadratic_fit, verbose=verbose)
-
-    esf = project_and_bin(image, dist, oversampling, verbose=verbose)  # edge spread function
-
-    lsf = differentiate(esf, diff_kernel)  # line spread function
-
-    hann_win, hann_width, idx = filter_window(lsf, oversampling)  # define window to be applied on LSF
-
-    mtf = calc_mtf(lsf, hann_win, idx, oversampling, diff_ft)
-
-    if show_plots >= 4 or return_fig:
-        i1, i2 = idx
-        nn = (i2 - i1) // 2
-        lsf_sign = np.sign(np.mean(lsf[i1:i2] * hann_win))
-
-        fig, ax = plt.subplots()
-        ax.plot(esf[i1:i2], 'b.-', label=f"ESF, oversampling: {oversampling:2d}")
-        ax.plot(lsf_sign * lsf[i1:i2], 'r.-', label=f"{'-' if lsf_sign < 0 else ''}LSF")
-        ax.plot(hann_win * ax.axes.get_ylim()[1] * 1.1, 'g.-', label=f"Hann window, width: {hann_width:d}")
-        ax.set_xlim(0, 2 * nn)
-        ax2 = ax.twinx()
-        ax2.get_yaxis().set_visible(False)
-        ax.grid()
-        ax.legend(loc='upper left')
-        ax.set_xlabel('Bin no.')
-        if verbose:
-            textstr = '\n'.join([f"Curved edge fit: {quadratic_fit}",
-                                 f"Difference scheme: {difference_scheme}"])
-            props = dict(facecolor='wheat', alpha=0.5)
-            ax.text(0.05, 0.50, textstr, transform=ax.transAxes,
-                    verticalalignment='top', bbox=props)
-
-    angle = angle_from_slope(slope)
-    angle_cw = rotated * 90.0 - angle  # angle clockwise (c.w.) from vertical axis
-    if angle_cw > 90.0:
-        angle_cw -= 180.0
-    status = {'rotated': rotated,
-              'angle': angle_cw,
-              'offset': offset}
-    if return_fig:
-        status.update({'fig': fig, 'ax': ax})
-
-    return mtf, status
-
-
-def relative_luminance(rgb_image, rgb_w=(0.2126, 0.7152, 0.0722)):
-    # Return relative luminance of image, based on sRGB MxNx3 (or MxNx4) input
-    # Default weights rgb_w are the ones for the sRGB colorspace
-    if rgb_image.ndim == 2:
-        return rgb_image  # do nothing, this is an MxN image without color data
-    else:
-        return rgb_w[0] * rgb_image[:, :, 0] + rgb_w[1] * rgb_image[:, :, 1] + rgb_w[2] * rgb_image[:, :, 2]
-
-
-def test():
-    import os.path
-
-    # A kind of "verbosity" for plots, higher value means more plots:
-    show_plots = 8  # setting this to 0 will result in no plots and much faster execution
-    print(f"show_plots: {show_plots}")
-
-    oversampling = 4
-    N = 100  # sample ROI size
-
-    n_well_FS = 10000  # simulated no. of electrons at full scale for the noise calculation
-    output_FS = 1.0  # image sensor output at full scale
-
-    def add_noise(sample_edge):
-        np.random.seed(0)  # make the noise deterministic in order to facilitate comparisons and debugging
-        return np.random.poisson(sample_edge / output_FS * n_well_FS) / n_well_FS
-
-    # --------------------------------------------------------------------
-    # Create a curved edge image with a custom esf for testing
-    esf = slanted_edge_target.InterpolateESF([-0.5, 0.5],
-                                             [0.0, 1.0]).f  # ideal edge esf for pixels with 100% fill factor
-
-    # arrays of positions and corresponding esf values
-    x, edge_lsf_pixel = slanted_edge_target.calc_custom_esf(sigma=0.3, pixel_fill_factor=1.0, show_plots=show_plots)
-    # a more realistic (custom) esf
-    esf = slanted_edge_target.InterpolateESF(x, edge_lsf_pixel).f
-
-    image_float, _ = slanted_edge_target.make_slanted_curved_edge((N, N), curvature=0.001,
-                                                                  illum_gradient_angle=0.0,
-                                                                  illum_gradient_magnitude=0.0,
-                                                                  low_level=0.25, hi_level=0.70, esf=esf, angle=5.0)
-    im = image_float
-
-    # Display the image in 8 bit grayscale
-    nbits = 8
-    image_int = np.round((2 ** nbits - 1) * im.clip(0.0, 1.0)).astype(np.uint8)
-    image_int = np.stack([image_int for i in range(3)], axis=2)
-
-    # Save slanted edge ROI as an image file in the current directory
-    current_dir = os.path.abspath(os.path.dirname(__file__))
-    save_path = os.path.join(current_dir, "slanted_edge_example.png")
-    plt.imsave(save_path, image_int, vmin=0, vmax=255, cmap='gray')
-
-    # --------------------------------------------------------------------
-    # (This is where you would load your own ROI image from file. Remember to 
-    # also remove gamma and to apply white balance if raw images are used from 
-    # an image sensor with a Bayer (color filter) pattern.)
-
-    # Load slanted edge ROI image from from file
-    im = plt.imread("slanted_edge_example.png")
-
-    sample_edge = relative_luminance(im)
-    for simulate_noise in [False]:  # [False, True]:
-        sample = add_noise(sample_edge) if simulate_noise else sample_edge
-
-        if show_plots >= 6:
-            # display the image in 8 bit grayscale
-            nbits = 8
-            image_int = np.round((2 ** nbits - 1) * sample.clip(0.0, 1.0)).astype(np.uint8)
-            # plt.ishow and plt.imsave with cmap='gray' doesn't interpolate properly(!), so we
-            # make an explicit grayscale sRGB image instead
-            image_int = np.stack([image_int for i in range(3)], axis=2)
-            plt.figure()
-            plt.imshow(image_int)
-            # plt.imshow(image_int, cmap='gray', vmin=0, vmax=255)
-
-        print(" ")
-        mtf, _ = calc_sfr(sample, show_plots=show_plots, verbose=True)
-        mtf_quadr, _ = calc_sfr(sample, show_plots=show_plots - 4, quadratic_fit=True, verbose=True)
-        print(f"\nNow do the exact same two function calls, but without diagnostic"
-              f" plots, to get the true execution speed of the SFR calculation"
-              f" from the {N:d} x {N:d} pixel ROI image:")
-        # This is how you would call the function in an automated script.
-        # Remember that you can also comment out the "@execution_timer"
-        # decorator and skip verbosity (default is False):
-        mtf, status = calc_sfr(sample, verbose=True)
-        mtf_quadr, status_quadr = calc_sfr(sample, quadratic_fit=True, verbose=True)
-        print(" ")
-
-        if show_plots >= 1:
-            plt.figure()
-            plt.plot(mtf[:, 0], mtf[:, 1], '.-', label="linear fit to edge")
-            plt.plot(mtf_quadr[:, 0], mtf_quadr[:, 1], '.-', label="quadratic fit to edge")
-            f = np.arange(0.0, 2.0, 0.01)
-            mtf_sinc = np.abs(np.sinc(f))
-            plt.plot(f, mtf_sinc, 'k-', label="sinc")
-            plt.xlim(0, 2.0)
-            plt.ylim(0, 1.2)
-            textstr = f"Edge angle: {status['angle']:.1f}°"
-            props = dict(facecolor='w', alpha=0.5)
-            ax = plt.gca()
-            plt.text(0.65, 0.60, textstr, transform=ax.transAxes,
-                     verticalalignment='top', bbox=props)
-            plt.grid()
-            shape = f'{sample_edge.shape[1]:d}x{sample_edge.shape[0]:d} px'
-            if simulate_noise and n_well_FS > 0:
-                n_well_lo, n_well_hi = np.unique(sample_edge)[[0, -1]] * n_well_FS
-                snr_lo, snr_hi = np.sqrt([n_well_lo, n_well_hi])
-                noise = f' SNR={snr_lo:.0f} (dark) and SNR={snr_hi:.0f} (bright)'
+        # pcoefs contains quadratic polynomial coefficients for the x-coordinate
+        # of the curved edge as a function of the y-coordinate:
+        # x = pcoefs[0] * y**2 + pcoefs[1] * y + pcoefs[2]
+        pcoefs = np.polyfit(idx, centr[idx], 2)
+
+        if self.show_plots >= 5:
+            self.verbose and print("showing plots!")
+            fig, ax = plt.subplots()
+            if rotated:
+                ax.plot(idx, patch_shape[1] - centr[idx], '.k', label="centroids")
+                ax.plot(idx, patch_shape[1] - np.polyval([slope, offset], idx), '-', label="linear fit")
+                ax.plot(idx, patch_shape[1] - np.polyval(pcoefs, idx), '--', label="quadratic fit")
+                ax.set_xlim([0, patch_shape[0]])
+                ax.set_ylim([0, patch_shape[1]])
             else:
-                noise = 'out noise'
-            angle = status['angle']
-            plt.title(f'SFR from {shape:s} curved slanted edge\nwith{noise:s}, edge angle={angle:.1f}°')
-            plt.ylabel('MTF')
-            plt.xlabel('Spatial frequency (cycles/pixel)')
-            plt.legend(loc='best')
+                ax.plot(centr[idx], idx, '.k', label="centroids")
+                ax.plot(np.polyval([slope, offset], idx), idx, '-', label="linear fit")
+                ax.plot(np.polyval(pcoefs, idx), idx, '--', label="quadratic fit")
+                ax.set_xlim([0, patch_shape[1]])
+                ax.set_ylim([0, patch_shape[0]])
+            ax.set_aspect('equal', 'box')
+            ax.legend(loc='best')
+            ax.invert_yaxis()
+            # plt.show()
 
-    # _______________________________________________________________________________
-    # Test with ideal slanted edge, result should be very similar to sinc function for the aperture (black curve)
-    if True:
-        ideal_edge = slanted_edge_target.make_ideal_slanted_edge((N, N), angle=85.0)
+        return pcoefs, slope, offset
 
-        for simulate_noise in [False, True]:
-            sample = add_noise(ideal_edge) if simulate_noise else ideal_edge
+    @staticmethod
+    def midpoint_slope_and_curvature_from_polynomial(a, b, c, y0, y1):
+        # Describe input 2nd degree polynomial f(y) = a*y**2 + b*y + c in
+        # terms of midpoint, slope (at midpoint), and curvature (at midpoint)
+        y_mid = (y1 + y0) / 2
+        x_mid = a * y_mid ** 2 + b * y_mid + c
+        # Calculated slope as first derivative of x = f(y) at y = y_mid
+        slope = 2 * a * y_mid + b
+        # Calculate the curvature as k(y) = f''(y) / (1 + f'(y)^2)^(3/2)
+        curvature = 2 * a / (1 + slope ** 2) ** (3 / 2)
+        return y_mid, x_mid, slope, curvature
 
-            if show_plots >= 6:
-                # display the image in 8 bit grayscale
-                nbits = 8
-                image_int = np.round((2 ** nbits - 1) * sample.clip(0.0, 1.0)).astype(np.uint8)
-                # plt.ishow and plt.imsave with cmap='gray' doesn't interpolate properly(!), so we
-                # make an explicit grayscale sRGB image instead
-                image_int = np.stack([image_int for i in range(3)], axis=2)
-                plt.figure()
-                plt.imshow(image_int)
+    @staticmethod
+    def polynomial_from_midpoint_slope_and_curvature(y_mid, x_mid, slope, curvature):
+        # Calculate a 2nd degree polynomial x = f(y) = a*y**2 + b*y + c that passes
+        # through the midpoint (x_mid, y_mid) with the given slope and curvature
+        a = curvature * (1 + slope ** 2) ** (3 / 2) / 2
+        b = slope - 2 * a * y_mid
+        c = x_mid - a * y_mid ** 2 - b * y_mid
+        return [a, b, c]
 
-            mtf_list = []
-            oversampling_list = [4, 6, 8]
-            for oversampling in oversampling_list:
-                mtf, status = calc_sfr(sample, oversampling=oversampling, show_plots=show_plots - 4, verbose=False)
-                mtf_list.append(mtf)
+    @staticmethod
+    def cubic_solver(a, b, c, d):
+        # Solve the equation a*x**3 + b*x**2 + c*x + d = 0 for a
+        # real-valued root x by Cardano's method
+        # (https://en.wikipedia.org/wiki/Cubic_equation#Cardano's_formula)
 
-            if show_plots:
-                plt.figure()
-                for j, oversampling in zip(range(len(mtf_list)), oversampling_list):
-                    plt.plot(mtf_list[j][:, 0], mtf_list[j][:, 1], '.-', label=f"oversampling: {oversampling:2d}")
-                f = np.arange(0.0, 2.0, 0.01)
-                mtf_sinc = np.abs(np.sinc(f))
-                plt.plot(f, mtf_sinc, 'k-', label="sinc")
-                plt.xlim(0, 2.0)
-                plt.ylim(0, 1.2)
-                textstr = f"Edge angle: {status['angle']:.1f}°"
-                props = dict(facecolor='w', alpha=0.5)
-                ax = plt.gca()
-                plt.text(0.65, 0.60, textstr, transform=ax.transAxes,
-                         verticalalignment='top', bbox=props)
-                plt.grid()
+        p = (3 * a * c - b ** 2) / (3 * a ** 2)
+        q = (2 * b ** 3 - 9 * a * b * c + 27 * a ** 2 * d) / (27 * a ** 3)
 
-                plt.ylabel('MTF')
-                plt.xlabel('Spatial frequency (cycles/pixel)')
-                shape = f'{ideal_edge.shape[1]:d}x{ideal_edge.shape[0]:d} px'
-                if simulate_noise and n_well_FS > 0:
-                    n_well_lo, n_well_hi = np.unique(ideal_edge)[[0, -1]] * n_well_FS
-                    snr_lo, snr_hi = np.sqrt([n_well_lo, n_well_hi])
-                    noise = f' SNR(dark) = {snr_lo:.0f} and SNR(bright) = {snr_hi:.0f}'
-                else:
-                    noise = 'out noise'
-                plt.title(f'SFR from {shape:s} ideal slanted edge\nwith{noise:s}')
-                plt.legend(loc='best')
+        # A real root exists if 4 * p**3 + 27 * q**2 > 0
+        sr = np.sqrt(q ** 2 / 4 + p ** 3 / 27)
+        t = np.cbrt(-q / 2 + sr) + np.cbrt(-q / 2 - sr)
+        x = t - b / (3 * a)
+        return x
 
+    @staticmethod
+    def dot(a, b):
+        return a[0] * b[0] + a[1] * b[1]
 
-if __name__ == "__main__":
-    test()
-    plt.show()
+    # @execution_timer
+    def calc_distance(self, data_shape, p):
+        # Calculate the distance (with sign) from each point (x, y) in the
+        # image patch "data" to the slanted edge described by the polynomial p.
+        # It is assumed that the edge is approximately vertically orientated
+        # (between -45° and 45° from the vertical direction).
+        # Distances to points to the left of the edge are negative, and positive
+        # to points to the right of the edge.
+        x, y = np.meshgrid(range(data_shape[1]), range(data_shape[0]))
+
+        self.verbose and print(f'quadratic fit: {str(self.quadratic_fit):s}')
+
+        if not self.quadratic_fit or p[0] == 0.0:
+            slope, offset = p[1], p[2]  # use linear fit to edge
+            a, b, c = 1, -slope, -offset
+            a_b = np.sqrt(a ** 2 + b ** 2)
+
+            # |ax+by+c| / |a_b| is the distance from (x,y) to the slanted edge:
+            dist = (a * x + b * y + c) / a_b
+        else:
+            # Define a cubic polynomial equation for the y-coordinate
+            # y0 at the point (x0, y0) on the curved edge that is closest to (x, y)
+            d = -y + p[1] * p[2] - x * p[1]
+            c = 1 + p[1] ** 2 + 2 * p[2] * p[0] - 2 * x * p[0]
+            b = 3 * p[1] * p[0]
+            a = 2 * p[0] ** 2
+
+            if p[0] == 0.0:
+                y0 = -d / c  # solution if edge is straight (quadratic term is zero)
+            else:
+                y0 = self.cubic_solver(a, b, c, d)  # edge is curved
+
+            x0 = p[0] * y0 ** 2 + p[1] * y0 + p[2]
+            dxx_dyy = np.array(2 * p[0] * y0 + p[1])  # slope at (x0, y0)
+            r2 = self.dot([1, -dxx_dyy], [1, -dxx_dyy])
+            # distance between (x, y) and (x0, y0) along normal to curve at (x0, y0)
+            dist = self.dot([x - x0, y - y0], [1, -dxx_dyy]) / np.sqrt(r2)
+        return dist
+
+    # @execution_timer
+    def project_and_bin(self, data, dist):
+        # p contains quadratic polynomial coefficients for the x-coordinate
+        # of the curved edge as a function of the y-coordinate:
+        # x = p[0]*y**2 + p[1]*y + p[2]
+
+        # Create a matrix "bins" where each element represents the bin index of the
+        # corresponding image pixel in "data":
+        bins = np.round(dist * self.oversampling).astype(int)
+        bins = bins.flatten()
+        bins -= np.min(bins)  # add an offset so that bins start at 0
+
+        esf = np.zeros(np.max(bins) + 1)  # Edge spread function
+        cnts = np.zeros(np.max(bins) + 1).astype(int)
+        data_flat = data.flatten()
+        for b_indx, b_sorted in zip(np.argsort(bins), np.sort(bins)):
+            esf[b_sorted] += data_flat[b_indx]  # Collect pixel contributions in this bin
+            cnts[b_sorted] += 1  # Keep a tab of how many contributions were made to this bin
+
+        # Calculate mean by dividing by the number of contributing pixels. Avoid
+        # division by zero, in case there are bins with no content.
+        esf[cnts > 0] /= cnts[cnts > 0]
+        if np.any(cnts == 0):
+            if self.verbose:
+                print("Warning: esf bins with zero pixel contributions were found. Results may be inaccurate.")
+                print(f"Try reducing the oversampling factor, which currently is {self.oversampling:d}.")
+            # Try to save the situation by patching in values in the empty bins if possible
+            patch_cntr = 0
+            for i in np.where(cnts == 0)[0]:  # loop through all empty bin locations
+                j = [i - 1, i + 1]  # indices of nearest neighbors
+                if j[0] < 0:  # Is left neighbor index outside esf array?
+                    j = j[1]
+                elif j[1] == len(cnts):  # Is right neighbor index outside esf array?
+                    j = j[0]
+                if np.all(cnts[j] > 0):  # Now, if neighbor bins are non-empty
+                    esf[i] = np.mean(esf[j])  # use the interpolated value
+                    patch_cntr += 1
+            if patch_cntr > 0 and self.verbose:
+                print(f"Values in {patch_cntr:d} empty ESF bins were patched by "
+                      f"interpolation between their respective nearest neighbors.")
+        return esf
+
+    @staticmethod
+    def peak_width(y, rel_threshold):
+        # Find width of peak in y that is above a certain fraction of the maximum value
+        val = np.abs(y)
+        val_threshold = rel_threshold * np.max(val)
+        indices = np.where(val - val_threshold > 0.0)[0]
+        return indices[-1] - indices[0]
+
+    def filter_window(self, lsf):
+        # The window ('hann_win') returned by this function will be used as a filter
+        # on the LSF signal during the MTF calculation to reduce noise
+
+        nn0 = 20 * self.oversampling  # sample range to be used for the FFT, intial guess
+        mid = len(lsf) // 2
+        i1 = max(0, mid - nn0)
+        i2 = min(2 * mid, mid + nn0)
+        nn = (i2 - i1) // 2  # sample range to be used, final
+
+        # Filter LSF curve with a uniform kernel to better find center and
+        # determine an appropriate Hann window width for noise reduction
+        lsf_conv = np.convolve(lsf[i1:i2], np.ones(self.lsf_centering_kernel_sz), 'same')
+
+        # Base Hann window half width on the width of the filtered LSF curve
+        hann_hw = max(np.round(self.win_width_factor * self.peak_width(lsf_conv, self.lsf_threshold)).astype(int),
+                      5 * self.oversampling)
+
+        bin_c = np.argmax(np.abs(lsf_conv))  # center bin, corresponding to LSF max
+
+        # Construct Hann window centered over the LSF peak, crop if necessary to
+        # the range [0, 2*nn]
+        crop_l = max(hann_hw - bin_c, 0)
+        crop_r = min(2 * nn - (hann_hw + bin_c), 0)
+        hann_win = np.zeros(2 * nn)  # default value outside Hann function
+        hann_win[bin_c - hann_hw + crop_l:bin_c + hann_hw + crop_r] = \
+            np.hanning(2 * hann_hw)[crop_l:2 * hann_hw + crop_r]
+        return hann_win, 2 * hann_hw, [i1, i2]
+
+    def calc_mtf(self, lsf, hann_win, idx):
+        # Calculate MTF using the LSF as input and use the supplied window function
+        # as filter to remove high frequency noise originating in regions far from
+        # the edge
+
+        i1, i2 = idx
+        mtf = np.abs(np.fft.fft(lsf[i1:i2] * hann_win))
+        nn = (i2 - i1) // 2
+        mtf = mtf[:nn]
+        mtf /= mtf[0]  # normalize to zero spatial frequency
+        f = np.arange(0, self.oversampling / 2, self.oversampling / nn / 2)  # spatial frequencies (cy/px)
+        # Compensate for finite impulse response of the numerical differentiation
+        # step used to derive the LSF from the ESF
+        # NB: This compensation function is incorrect in both ISO 12233:2014
+        # and ISO 12233:2017, Annex D
+        mtf *= (1 / np.sinc(4 * f / (self.diff_ft * self.oversampling))).clip(0.0, 10.0)
+        return np.column_stack((f, mtf))
+
+    # @execution_timer  # call to timing module, comment out if not used
+    def calc_sfr(self, image):
+        """"
+        Calculate spectral response function (SFR), this is the main function
+
+        input: image patch with slanted edge to be analyzed (2-d Numpy array of float)
+        output: MTF organized as a 2-d array where first column is spatial frequency, and second column
+                contains MTF values
+        output: status dict with fitted edge angle (c.w. from vertical), offset, image rotation etc.
+
+        NB: SFR calculations will fail for edge angles of 0°, 45°, and 90° (an inherent limitation of the method)
+        """
+        # TODO: apply Hann (or Hamming) window before calculating centroids, or
+        # TODO: do a second pass after find_edge with windowing, centroids, and find_edge
+
+        # Calculate centroids for the edge transition of each row
+        sample_diff = self.differentiate(image)
+        centr = self.centroid(sample_diff) + self.diff_offset
+
+        # Calculate centroids also for the 90° right rotated image
+        image_rot90 = image.T[:, ::-1]  # rotate by transposing and mirroring
+        sample_diff = self.differentiate(image_rot90)
+        centr_rot = self.centroid(sample_diff) + self.diff_offset
+
+        # Use rotated image if it results in fewer rows without edge transitions
+        if np.sum(np.isnan(centr_rot)) < np.sum(np.isnan(centr)):
+            self.verbose and print("Rotating image by 90°")
+            image, centr = image_rot90, centr_rot
+            rotated = True
+        else:
+            rotated = False
+
+        # Finds polynomials that describes the slanted edge by least squares
+        # regression to the centroids:
+        #  - pcoefs are the 2nd order fit coefficients
+        #  - [slope, offset] are the first order (linear) fit coefficients for the same edge
+        pcoefs, slope, offset = self.find_edge(centr, image.shape, rotated)
+
+        pcoefs = [0.0, slope, offset] if not self.quadratic_fit else pcoefs
+
+        # Calculate distance (with sign) from each point (x, y) in the
+        # image patch "data" to the slanted edge
+        dist = self.calc_distance(image.shape, pcoefs)
+
+        esf = self.project_and_bin(image, dist)  # edge spread function
+
+        lsf = self.differentiate(esf)  # line spread function
+
+        hann_win, hann_width, idx = self.filter_window(lsf)  # define window to be applied on LSF
+
+        mtf = self.calc_mtf(lsf, hann_win, idx)
+
+        if self.show_plots >= 4 or self.return_fig:
+            i1, i2 = idx
+            nn = (i2 - i1) // 2
+            lsf_sign = np.sign(np.mean(lsf[i1:i2] * hann_win))
+
+            fig, ax = plt.subplots()
+            ax.plot(esf[i1:i2], 'b.-', label=f"ESF, oversampling: {self.oversampling:2d}")
+            ax.plot(lsf_sign * lsf[i1:i2], 'r.-', label=f"{'-' if lsf_sign < 0 else ''}LSF")
+            ax.plot(hann_win * ax.axes.get_ylim()[1] * 1.1, 'g.-', label=f"Hann window, width: {hann_width:d}")
+            ax.set_xlim(0, 2 * nn)
+            ax2 = ax.twinx()
+            ax2.get_yaxis().set_visible(False)
+            ax.grid()
+            ax.legend(loc='upper left')
+            ax.set_xlabel('Bin no.')
+            if self.verbose:
+                textstr = '\n'.join([f"Curved edge fit: {self.quadratic_fit}",
+                                     f"Difference scheme: {self.difference_scheme}"])
+                props = dict(facecolor='wheat', alpha=0.5)
+                ax.text(0.05, 0.50, textstr, transform=ax.transAxes,
+                        verticalalignment='top', bbox=props)
+
+        angle = angle_from_slope(slope)
+        angle_cw = rotated * 90.0 - angle  # angle clockwise (c.w.) from vertical axis
+        if angle_cw > 90.0:
+            angle_cw -= 180.0
+        status = {'rotated': rotated,
+                  'angle': angle_cw,
+                  'offset': offset}
+        if self.return_fig:
+            status.update({'fig': fig, 'ax': ax})
+
+        return mtf, status
