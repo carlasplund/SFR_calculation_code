@@ -19,7 +19,9 @@ edge curvature, uneven illumination, and arbitrary edge profiles.
 """
 
 import numpy as np
+
 import SFR
+import utils
 
 
 def make_ideal_slanted_edge(image_shape=(100, 100), angle=5.0, low_level=0.20, hi_level=0.80,
@@ -213,33 +215,6 @@ def calc_custom_esf(x_length=5.0, x_step=0.01, x_edge=0.0, pixel_fill_factor=1.0
     return x, edge_lsf_pixel
 
 
-def rgb2gray(im_rgb, im_0, im_1):
-    c_0 = [np.mean(im_0[i::2, j::2]) for i, j in ((0, 0), (0, 1), (1, 0), (1, 1))]
-    c_1 = [np.mean(im_1[i::2, j::2]) for i, j in ((0, 0), (0, 1), (1, 0), (1, 1))]
-
-    # Define and solve the following overdetermined equation system:
-    # c_1 - pedestal = lum_ratio * (c_0 - pedestal)
-    # Solve Ax = b for x, where x = [pedestal * (1 - lum_ratio), lum_ratio]
-    A = np.array([[1, c_0[i]] for i in range(4)])
-    b = np.array([c_1[i] for i in range(4)])
-    x, _, _, _ = np.linalg.lstsq(A, b, rcond=None)
-    lum_ratio = x[1]  # luminance ratio between light and dark sides of the edge
-    pedestal = x[0] / (1 - lum_ratio)  # estimate the pedestal that is added to the RGB image (not affected by RGB gain)
-
-    # Estimate dark side RGB signal without the pedestal
-    c_0_p = [np.mean([c_0[i] - pedestal, (c_1[i] - pedestal) / lum_ratio]) for i in range(4)]
-
-    # Define a reverse gain image that will flatten the RGB image, and normalize it to the
-    # green channel (i.e. as if all pixels were green in an RGB image)
-    c_p_max = np.max(c_0_p)
-    rev_gain_image = np.zeros_like(im_rgb)
-    for k, (i, j) in enumerate(((0, 0), (0, 1), (1, 0), (1, 1))):
-        rev_gain_image[i::2, j::2] = c_p_max / c_0_p[k]
-
-    # return flattened image
-    return (im_rgb - pedestal) * rev_gain_image + pedestal, pedestal
-
-
 if __name__ == '__main__':
     import os
     import matplotlib.pyplot as plt
@@ -304,7 +279,7 @@ if __name__ == '__main__':
         im_rgb_crop_dark = im_rgb[0:s, 0:s]
         im_rgb_crop_light = im_rgb[0:s, -(s + s % 2):-1]
         # White balance image (normalized to G channel) and estimate pedestal
-        im_gray, pedestal_estim = rgb2gray(im_rgb, im_rgb_crop_dark, im_rgb_crop_light)
+        im_gray, pedestal_estim, _ = utils.rgb2gray(im_rgb, im_rgb_crop_dark, im_rgb_crop_light)
         plt.figure()
         plt.title('im gray whitebalanced from RGB, normalized, pedestal removed')
         im_gray = (im_gray - pedestal_estim) / gain_g

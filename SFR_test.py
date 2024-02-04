@@ -1,19 +1,11 @@
 import matplotlib.pyplot as plt
 import numpy as np
 import os.path
+import time
 
 import SFR
 import slanted_edge_target
-import time
-
-
-def relative_luminance(rgb_image, rgb_w=(0.2126, 0.7152, 0.0722)):
-    # Return relative luminance of image, based on sRGB MxNx3 (or MxNx4) input
-    # Default weights rgb_w are the ones for the sRGB colorspace
-    if rgb_image.ndim == 2:
-        return rgb_image  # do nothing, this is an MxN image without color data
-    else:
-        return rgb_w[0] * rgb_image[:, :, 0] + rgb_w[1] * rgb_image[:, :, 1] + rgb_w[2] * rgb_image[:, :, 2]
+import utils
 
 
 def test():
@@ -64,7 +56,7 @@ def test():
     # Load slanted edge ROI image from from file
     im = plt.imread("slanted_edge_example.png")
 
-    sample_edge = relative_luminance(im)
+    sample_edge = utils.relative_luminance(im)
     for simulate_noise in [False]:  # [False, True]:
         sample = add_noise(sample_edge) if simulate_noise else sample_edge
 
