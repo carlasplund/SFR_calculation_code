@@ -2,18 +2,50 @@ import matplotlib.pyplot as plt
 import numpy as np
 
 
-def read_raw(path, height=2200, width=3200, rshift=4, fmt='<u2'):
-    image = np.fromfile(path, dtype=np.dtype(fmt)) >> rshift
-    return np.reshape(image, (height, width)).astype(float)
+class Raw:
+    def __init__(self, height=2200, width=3200, shift=4, fmt='<u2'):
+        self.height = height
+        self.width = width
+        self.shift = shift
+        self.fmt = fmt
+
+    def read(self, path):
+        image = np.fromfile(path, dtype=np.dtype(self.fmt)) >> self.shift
+        return np.reshape(image, (self.height, self.width)).astype(float)
+
+    def write(self, im_data, path):
+        output = (im_data.flatten().astype(self.fmt) << self.shift).tobytes()
+        with open(path, 'wb') as f:
+            f.write(output)
 
 
-def write_raw(im_data, path, lshift=4, fmt='<u2'):
-    output = (im_data.flatten().astype(fmt) << lshift).tobytes()
-    with open(path, 'wb') as f:
-        f.write(output)
-
+# def read_raw(path, height=2200, width=3200, rshift=4, fmt='<u2'):
+#     image = np.fromfile(path, dtype=np.dtype(fmt)) >> rshift
+#     return np.reshape(image, (height, width)).astype(float)
+#
+#
+# def write_raw(im_data, path, lshift=4, fmt='<u2'):
+#     output = (im_data.flatten().astype(fmt) << lshift).tobytes()
+#     with open(path, 'wb') as f:
+#         f.write(output)
 
 def read_8bit(path):
+    """
+    Reads .bmp, .png, .jpg, etc. files
+    Uses plt.imread(), which in turn calls PIL.Image.open()
+    Note that the .pgm implementation of PIL is badly broken (more specifically, PGM P2 and P5 16-bit is broken,
+    however, PGM P5 8-bit works), so we have dedicated functions for loading and saving images in these formats.
+
+    From the Matplotlib documentation:
+
+    The returned array has shape
+        (M, N) for grayscale images.
+        (M, N, 3) for RGB images.
+        (M, N, 4) for RGBA images.
+
+    PNG images are returned as float arrays (0-1). All other formats are returned as int arrays,
+    with a bit depth determined by the file's contents.
+    """
     return plt.imread(path).astype(float)
 
 
@@ -39,7 +71,7 @@ def read_pgm(file_path):
     cols, rows = [int(v) for v in lines[1].split()]
     max_val = int(lines[2])
 
-    if magic_number in 'P2':  # Convert ASCII format (P2) data into a list of integers
+    if magic_number in 'P2':  # convert ASCII format (P2) data into a list of integers
         with open(file_path, 'r') as f:
             f.seek(image_data_start)  # read file again, but this time as a text file; skip the metadata lines
             lines = f.readlines()
@@ -171,24 +203,23 @@ def rgb2gray(im_rgb, im_0, im_1):
 def test():
     import matplotlib.pyplot as plt
 
-    # Test reading .pgm P2 file:
+    # Test reading image file in .pgm P2 format (ASCII string)
     plt.figure()
     file_path = "test_pgm_P2.pgm"
-    im = read_pgm(file_path)  # .pgm P2 format (ASCII string)
+    im = read_pgm(file_path)
     plt.imshow(im, cmap='gray')
     plt.title(f'PGM P2 (ASCII) file: {file_path}')
 
     # Test writing / reading raw binary file
-    im_shape = im.shape
-    write_raw(im, "test_raw.raw")
-    im2 = read_raw("test_raw.raw", *im_shape)
+    Raw().write(im, "test_raw.raw")
+    im2 = Raw(*im.shape).read("test_raw.raw")
     total_diff = np.sum(np.abs(im2 - im))
     print(f'Total difference between original and written/read raw file: {total_diff}')
 
     # Test writing/reading different .pgm formats
-    write_pgm(im, "test_ascii.pgm", magic_number='P2', comment='P2 ASCII!!')
-    write_pgm(im, "test_binary_uint8.pgm", magic_number='P5', comment='P5 binary uint8!!')
-    write_pgm(im + 300, "test_binary_uint16.pgm", magic_number='P5', comment='P5 binary uint16!!')
+    write_pgm(im, "test_ascii.pgm", magic_number='P2', comment='P2 ASCII')
+    write_pgm(im, "test_binary_uint8.pgm", magic_number='P5', comment='P5 binary uint8')
+    write_pgm(im + 300, "test_binary_uint16.pgm", magic_number='P5', comment='P5 binary uint16')
 
     for file_path in ["test_ascii.pgm", "test_binary_uint8.pgm", "test_binary_uint16.pgm"]:
         plt.figure()
