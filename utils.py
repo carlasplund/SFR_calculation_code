@@ -2,9 +2,15 @@ import matplotlib.pyplot as plt
 import numpy as np
 
 
-def read_raw(path, width=3200, height=2200, rshift=4):
-    image = np.fromfile(path, dtype=np.dtype('<u2')) >> rshift
+def read_raw(path, height=2200, width=3200, rshift=4, fmt='<u2'):
+    image = np.fromfile(path, dtype=np.dtype(fmt)) >> rshift
     return np.reshape(image, (height, width)).astype(float)
+
+
+def write_raw(im_data, path, lshift=4, fmt='<u2'):
+    output = (im_data.flatten().astype(fmt) << lshift).tobytes()
+    with open(path, 'wb') as f:
+        f.write(output)
 
 
 def read_8bit(path):
@@ -165,13 +171,21 @@ def rgb2gray(im_rgb, im_0, im_1):
 def test():
     import matplotlib.pyplot as plt
 
-    # Usage example:
+    # Test reading .pgm P2 file:
     plt.figure()
     file_path = "test_pgm_P2.pgm"
     im = read_pgm(file_path)  # .pgm P2 format (ASCII string)
     plt.imshow(im, cmap='gray')
     plt.title(f'PGM P2 (ASCII) file: {file_path}')
 
+    # Test writing / reading raw binary file
+    im_shape = im.shape
+    write_raw(im, "test_raw.raw")
+    im2 = read_raw("test_raw.raw", *im_shape)
+    total_diff = np.sum(np.abs(im2 - im))
+    print(f'Total difference between original and written/read raw file: {total_diff}')
+
+    # Test writing/reading different .pgm formats
     write_pgm(im, "test_ascii.pgm", magic_number='P2', comment='P2 ASCII!!')
     write_pgm(im, "test_binary_uint8.pgm", magic_number='P5', comment='P5 binary uint8!!')
     write_pgm(im + 300, "test_binary_uint16.pgm", magic_number='P5', comment='P5 binary uint16!!')
