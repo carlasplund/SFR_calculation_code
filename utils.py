@@ -200,8 +200,36 @@ def rgb2gray(im_rgb, im_0, im_1):
     return (im_rgb - pedestal) * rev_gain_image + pedestal, pedestal, rev_gain
 
 
+def mtf_diffraction_limit(f_num, lam, f):
+    """ Optical transfer function (OTF) for a diffraction limited lens. The OTF is calculated as the autocorrelation
+    of a circular aperture.
+    Paramters:
+        f_num: float
+            f-number of the lens aperture
+        lam: float
+            wavelength in m
+        f: numpy array of float
+            spatial frequencies in cy/mm
+    """
+    v = lam / 1e-3 * f * f_num
+    v = v.clip(0.0, 1.0) if isinstance(v, np.ndarray) else np.min((v, 1.0))
+    return 2 / np.pi * (np.arccos(v) - v * np.sqrt(1 - v ** 2))
+
+
 def test():
     import matplotlib.pyplot as plt
+
+    # Test calculation of diffraction limited MTF
+    f_max = 600
+    f = np.linspace(0, f_max, f_max + 1)  # spatial frequency in cy/mm
+    f_num = 4.0  # f-number
+    lam = 500e-9  # wavelength in m
+    mtf = mtf_diffraction_limit(f_num, lam, f)
+    plt.figure()
+    plt.plot(f, mtf, '.-')
+    plt.grid('both', 'both')
+    plt.title(f'Diffraction limited MTF for {lam / 1e-9:.0f} nm wavelength and  f/{f_num}')
+    plt.show()
 
     # Test reading image file in .pgm P2 format (ASCII string)
     plt.figure()
