@@ -2,6 +2,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 import scipy
 import copy
+import os
 
 
 class Raw:
@@ -200,6 +201,67 @@ class MTFplotter:
         ax.set_xlabel('Spatial frequency (cy/mm)')
         ax.legend(loc='best')
         return mtf_system, mtf_lens, status
+
+
+def plot_contour(data_h, data_v, range_lo, range_hi, lim_min, lim_av, text,
+                 save_folder, radius0=38.0, radius1=55.0, save_to_file=True):
+    """
+    Plot the MTF values at a specific spatial frequency vs. horizontal and vertical field angles as a colored
+    contour plot.
+    :param data_h: np.array of three columns, 1st hor. field angle, 2nd vert. field angle, 3rd MTF value in hor. dir.
+    :param data_v: as data_h, but with 3rd column containing MTF value measured in vert. direction
+    :param range_lo: lowest MTF value to be plotted as a contour
+    :param range_hi: highest MTF value to be plotted as a contour
+    :param lim_min: specification limit for the min(horizontal MTF, vertical MTF) plot
+    :param lim_av: specification limit for the (horizontal MTF + vertical MTF) / 2 plot
+    :param text: text to be displayed in the plot title as basis for the figure save filename
+    :param save_folder: where to save the figure
+    :param radius0: radius of inner field angle circle (in degrees)
+    :param radius1: radius of outer field angle circle (in degrees)
+    :param save_to_file: save plots to file if True
+    :return:
+    """
+    data_av = np.column_stack([data_h[:, :2], 0.5 * (data_h[:, 2] + data_v[:, 2])])
+    data_min = np.column_stack([data_h[:, :2], np.minimum(data_h[:, 2], data_v[:, 2])])
+    for g, direction, contrast_limit in zip([data_h, data_v, data_av, data_min], ['hor.', 'vert.', 'av.', 'min.'],
+                                            [lim_min, lim_min, lim_av, lim_min]):
+        if direction in ['hor.', 'vert.']:
+            continue
+        points = g[:, :2]
+        values = g[:, 2]
+        xx, yy = np.meshgrid(np.arange(-radius1, radius1 + 1), np.arange(-radius0, radius0 + 1))
+        grid_points = np.column_stack([xx.flatten(), yy.flatten()])
+        zz = scipy.interpolate.griddata(points, values, grid_points, method='linear')
+        zz = zz.reshape(xx.shape)
+        plt.figure()
+        cs = plt.contourf(xx, yy, zz, levels=np.arange(range_lo, range_hi + 0.01, 0.05))
+        colors = ['r' if z <= contrast_limit else 'k' for z in cs.levels]
+
+        linestyles = 'solid'
+        linewidths = [1.5 if (z / 0.05).astype(int) % 2 else 1.0 for z in cs.levels]
+        cs2 = plt.contour(cs, levels=cs.levels, linestyles=linestyles, linewidths=linewidths, colors=colors)
+        cbar = plt.colorbar(cs)
+        cbar.add_lines(cs2)
+        a = np.linspace(0, 2 * np.pi, 101)
+        for r in [radius0, radius1]:
+            plt.plot(r * np.cos(a), r * np.sin(a), 'k--')
+        plt.plot(points[:, 0], points[:, 1], '.k')
+        plt.gca().axis('equal')
+        plt.ylim([-radius0, radius0])
+        plt.xlim([-radius1, radius1])
+        plt.xlabel('Horizontal field angle (°)')
+        plt.ylabel('Vertical field angle (°)')
+        txt = f'{text}, {direction} MTF'
+        plt.title(txt)
+        if save_to_file:
+            # remove/replace unsuitable characters from the title text for use as a filename
+            filename = txt.replace('/', '_').replace(' ', '_').replace(',', '').replace('.', '')
+            fpath = os.path.join(save_folder, filename + '.png')
+            dpi = 200
+            plt.savefig(fpath, dpi=dpi)
+            plt.close()
+    if not save_to_file:
+        plt.show()
 
 
 def read_8bit(path):
