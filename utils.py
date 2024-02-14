@@ -129,16 +129,16 @@ def extrap_mtf(input_lens_mtf, fit_begin=[60, 70], fit_end=[100, 90], mtf_fit_li
 
 
 def plot_image_and_crop_roi(fig, ax1, im, xc, yc, roi_height=80, roi_width=80):
-    import selection_rectangles
+    import selection_tools
     ax1.imshow(im, cmap='gray')
-    r = selection_rectangles.RectXY(fig, ax1)
+    r = selection_tools.RectXY(fig, ax1)
     fig.canvas.mpl_connect('motion_notify_event', r.move)
     fig.canvas.mpl_connect('button_press_event', r.fix_or_release)
     fig.canvas.mpl_connect('key_release_event', r.keypress)
     roi_data = [{'x_center': xc, 'y_center': yc, 'height': roi_height, 'width': roi_width}]
     r.populate_roi_data(roi_data)
-    # (selection_rectangles supports using multiple ROIs on the same image, but here we only use one ROI per image)
-    im_roi = selection_rectangles.crop(im, roi_data)[0]
+    # (selection_tools supports using multiple ROIs on the same image, but here we only use one ROI per image)
+    im_roi = selection_tools.crop(im, roi_data)[0]
     return im_roi
 
 
