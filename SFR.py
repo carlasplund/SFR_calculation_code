@@ -37,7 +37,6 @@ import matplotlib.pyplot as plt
 import numpy as np
 import scipy.signal
 
-import slanted_edge_target
 # from execution_timer import execution_timer  # (optional) timing module
 
 
