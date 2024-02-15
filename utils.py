@@ -454,14 +454,14 @@ def mtf_diffraction_limit(f_num, lam, f):
 
 
 def test():
-    import matplotlib.pyplot as plt
+    import utils
 
     # Test calculation of diffraction limited MTF
     f_max = 600
     f = np.linspace(0, f_max, f_max + 1)  # spatial frequency in cy/mm
     f_num = 4.0  # f-number
     lam = 500e-9  # wavelength in m
-    mtf = mtf_diffraction_limit(f_num, lam, f)
+    mtf = utils.mtf_diffraction_limit(f_num, lam, f)
     plt.figure()
     plt.plot(f, mtf, '.-')
     plt.grid('both', 'both')
@@ -471,24 +471,24 @@ def test():
     # Test reading image file in .pgm P2 format (ASCII string)
     plt.figure()
     file_path = "test_pgm_P2.pgm"
-    im = read_pgm(file_path)
+    im = utils.read_pgm(file_path)
     plt.imshow(im, cmap='gray')
     plt.title(f'PGM P2 (ASCII) file: {file_path}')
 
     # Test writing / reading raw binary file
-    Raw().write(im, "test_raw.raw")
-    im2 = Raw(*im.shape).read("test_raw.raw")
+    utils.Raw().write(im, "test_raw.raw")
+    im2 = utils.Raw(*im.shape).read("test_raw.raw")
     total_diff = np.sum(np.abs(im2 - im))
     print(f'Total difference between original and written/read raw file: {total_diff}')
 
     # Test writing/reading different .pgm formats
-    write_pgm(im, "test_ascii.pgm", magic_number='P2', comment='P2 ASCII')
-    write_pgm(im, "test_binary_uint8.pgm", magic_number='P5', comment='P5 binary uint8')
-    write_pgm(im + 300, "test_binary_uint16.pgm", magic_number='P5', comment='P5 binary uint16')
+    utils.write_pgm(im, "test_ascii.pgm", magic_number='P2', comment='P2 ASCII')
+    utils.write_pgm(im, "test_binary_uint8.pgm", magic_number='P5', comment='P5 binary uint8')
+    utils.write_pgm(im + 300, "test_binary_uint16.pgm", magic_number='P5', comment='P5 binary uint16')
 
     for file_path in ["test_ascii.pgm", "test_binary_uint8.pgm", "test_binary_uint16.pgm"]:
         plt.figure()
-        im = read_pgm(file_path)
+        im = utils.read_pgm(file_path)
         plt.title(f'PGM file: {file_path}')
         plt.imshow(im, cmap='gray')
     plt.show()
