@@ -243,7 +243,7 @@ def test():
     for im_roi, r in zip(im_rois, roi_data):
         plt.figure()
         title = f'x, y = {r["x"]}:{r["x"] + r["width"]}, {r["y"]}:{r["y"] + r["height"]}'
-        plt.imshow(im_roi, cmap='gray')
+        plt.imshow(im_roi)
         plt.title(title)
     plt.show()
 

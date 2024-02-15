@@ -17,6 +17,7 @@ def get_parameters_from_file_name(im_filename):
     # The f-number may not be written in a consistent way in the folder name, so we employ a brute force parsing
     # method that accounts for several versions in use. :) Add new variants to this list as necessary.
     key_list = [
+        {'str_variants': ['F1_6'], 'f_num': 1.6},
         {'str_variants': ['f1_8'], 'f_num': 1.8},
         {'str_variants': ['f2_8', 'f_2_8', 'F2_8'], 'f_num': 2.8},
         {'str_variants': ['F2'], 'f_num': 2.0},
@@ -55,7 +56,7 @@ def select_ROI_and_calc_MTF(folder, save_folder, im_filename, pixel_pitch, read_
     mtf_plotter = utils.MTFplotter(pixel_pitch, f_number, lam_diffr=lam_diffr, fit_begin=[0.54, 0.63],
                                    fit_end=[0.90, 0.81], mtf_fit_limit=[0.40], mtf_tail_lvl=0.05)
 
-    for x_lims, range_str in zip([(0, 120), (0, 450)], ['', '_0to450cymm']):
+    for x_lims, range_str in zip([(0, 120), (0, 400)], ['', '_0to400cymm']):
         fig, [ax1, ax2] = plt.subplots(1, 2, figsize=(12, 4))
 
         ax1.imshow(im_roi, vmin=0.0, vmax=1.0, cmap='gray')
@@ -90,12 +91,13 @@ def test():
     folder = 'edge_samples'
     im_names = os.listdir(folder)
     im_names = [f for f in im_names if '.txt' not in f]
+    # TODO write a more general read function that automatically uses the correct read format
     if any('.bmp' in f for f in im_names):
         read_fcn, orig_ext = utils.read_8bit, '.bmp'
     if any('.png' in f for f in im_names):
         read_fcn, orig_ext = utils.read_8bit, '.png'
-    if any('.data' in f for f in im_names):
-        read_fcn, orig_ext = utils.Raw(height=2200, width=3200, shift=4).read, '.data'
+    if any('.pgm' in f for f in im_names):
+        read_fcn, orig_ext = utils.read_pgm, '.pgm'
     im_names = [f for f in im_names if orig_ext in f]
 
     for im_name in im_names:
