@@ -75,7 +75,7 @@ def slanted_edge_blurred_with_diffraction_only(shape, pixel_pitch, f_number, wav
     return blurred_im_roi, blurred_im_roi_from_ft
 
 
-def extrap_mtf(input_lens_mtf, fit_begin=[60, 70], fit_end=[100, 90], mtf_fit_limit=[0.40],
+def extrap_mtf(input_lens_mtf, pixel_pitch, fit_begin=[0.54, 0.63], fit_end=[0.90, 0.81], mtf_fit_limit=[0.40],
                mtf_tail_lvl=0.05, extend_to_fit=True):
     """
     The system / sensor MTF curve is unreliable at high spatial frequency, where the sensor MTF is small.
@@ -85,20 +85,21 @@ def extrap_mtf(input_lens_mtf, fit_begin=[60, 70], fit_end=[100, 90], mtf_fit_li
     :param input_lens_mtf: numpy array with spatial frequencies in cy/mm in the first row,
            and MTF (0.0-1.0) values in the second row, which are obtained by dividing the system MTF by
            the image sensor MTF (e.g. a sinc function)
-    :param fit_begin: list of two alternative start points for the fit interval (cy/mm)
-    :param fit_end: list of two alternative end points for the fit interval (cy/mm)
+    :param pixel_pitch: pixel pitch of the image sensor (µm)
+    :param fit_begin: list of two alternative start points for the fit interval (in Nyquist frequency units)
+    :param fit_end: list of two alternative end points for the fit interval (in Nyquist frequency units)
     :param mtf_fit_limit: list of one MTF level at which we switch from trying to use the first fit interval to the second
     :param mtf_tail_lvl: MTF beneath which the soft tail starts
     :param extend_to_fit: Add more points to fit the whole MTF curve (if necessary)
     :return:    2-d numpy array with spatial frequencies and lens MTF,
-                [fit range start used, fit range end used]
+                [fit range start used, fit range end used] in units of cy/mm
     """
-
+    f_nyquist = 1000 / pixel_pitch / 2
     f, mtf = input_lens_mtf[:, 0], input_lens_mtf[:, 1]
     mtf_ = scipy.interpolate.interp1d(f, mtf)
 
-    k = 1 if mtf_(fit_end[0]) < mtf_fit_limit[0] else 0
-    i = np.argwhere((fit_begin[k] <= f) & (f <= fit_end[k])).squeeze()
+    k = 1 if mtf_(fit_end[0] * f_nyquist) < mtf_fit_limit[0] else 0
+    i = np.argwhere((fit_begin[k] * f_nyquist <= f) & (f <= fit_end[k] * f_nyquist)).squeeze()
     slope, offset = np.polyfit(f[i].squeeze(), mtf[i].squeeze(), 1)
 
     x = copy.copy(f)
@@ -144,12 +145,13 @@ def plot_image_and_crop_roi(fig, ax1, im, xc, yc, roi_height=80, roi_width=80):
 
 class MTFplotter:
     def __init__(self, pixel_pitch, f_number=2.8, lam_diffr=550e-9, x_lims=[0, 120],
-                 fit_begin=[60, 70], fit_end=[100, 90], mtf_fit_limit=[0.40], mtf_tail_lvl=0.05):
-        self.pixel_pitch = pixel_pitch
+                 fit_begin=[0.54, 0.63], fit_end=[0.90, 0.81], mtf_fit_limit=[0.40], mtf_tail_lvl=0.05):
+        self.pixel_pitch = pixel_pitch  # pixel pitch (µm)
+        self.f_nyquist = 1000 / pixel_pitch / 2  # Nyquist frequency of the camera system (cy/mm)
         self.f_number = f_number  # f-number for which we calculate diffraction
         self.lam_diffr = lam_diffr  # wavelength for which we calculate diffraction
         self.x_lims = x_lims  # plot limits for spatial frequency (cy/mm)
-        self.fit_begin = fit_begin  # Two alternative start points for the fit interval
+        self.fit_begin = fit_begin  # Two alternative start points for the fit interval, in Nyquist frequency units
         self.fit_end = fit_end  # Two alternative end points for the fit interval
         self.mtf_fit_limit = mtf_fit_limit  # Where we switch from trying to use the first fit interval to the second
         self.mtf_tail_lvl = mtf_tail_lvl
@@ -163,7 +165,7 @@ class MTFplotter:
         sfr = SFR.SFR()  # allow fitting to a 2nd order polynomial edge shape
         mtf, status = sfr.calc_sfr(im_roi)
 
-        f0 = 1000 / self.pixel_pitch
+        f0 = 2 * self.f_nyquist  # limit frequency (cy/mm) where sensor MTF == 0
         mtf_lin[:, 0] *= f0
         mtf[:, 0] *= f0
 
@@ -176,9 +178,8 @@ class MTFplotter:
         # The system / sensor MTF curve is unreliable at high spatial frequency, where the sensor MTF is small.
         # Therefore, we fit the lens MTF curve in a frequency interval and extrapolate down to zero MTF beyond that
         # interval with a soft tail. If needed, more points added to fit the whole MTF curve down to ~zero MTF.
-
         mtf_lens, fit_range_used = \
-            utils.extrap_mtf(mtf_lens_raw, fit_begin=self.fit_begin, fit_end=self.fit_end,
+            utils.extrap_mtf(mtf_lens_raw, self.pixel_pitch, fit_begin=self.fit_begin, fit_end=self.fit_end,
                              mtf_fit_limit=self.mtf_fit_limit, mtf_tail_lvl=self.mtf_tail_lvl, extend_to_fit=True)
 
         # Diffraction limit MTF for reference (valid at wavelength == lam_diffr)
@@ -190,7 +191,8 @@ class MTFplotter:
         ax.plot(mtf_sinc[:, 0], mtf_sinc[:, 1], 'k-', label="ideal sensor MTF")
         ax.plot(mtf_lens_raw[:, 0], mtf_lens_raw[:, 1], '--', color='C2', label="system MTF / sensor MTF")
         ax.plot(mtf_lens[:, 0], mtf_lens[:, 1], '-.', color='C3',
-                label=f"lens MTF, fitted btw {fit_range_used[0]:.0f} and {fit_range_used[1]:.0f} cy/mm")
+                label=f"lens MTF, fitted btw {fit_range_used[0] * self.f_nyquist:.0f}"
+                      f" and {fit_range_used[1] * self.f_nyquist:.0f} cy/mm")
         ax.plot(mtf_diff[:, 0], mtf_diff[:, 1], ':k',
                 label=f'diffraction limit for {self.lam_diffr / 1e-9:.0f} nm, f/{self.f_number:.1f}')
 
