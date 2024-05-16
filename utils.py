@@ -156,7 +156,7 @@ class MTFplotter:
         self.mtf_fit_limit = mtf_fit_limit  # Where we switch from trying to use the first fit interval to the second
         self.mtf_tail_lvl = mtf_tail_lvl
 
-    def calc_and_plot_mtf(self, ax, im_roi, x_lims=None):
+    def calc_and_plot_mtf(self, ax, im_roi, x_lims=None, plot=True):
         import utils
         import SFR
         # Calculate MTF from the ROI with the slanted edge
@@ -185,24 +185,41 @@ class MTFplotter:
         # Diffraction limit MTF for reference (valid at wavelength == lam_diffr)
         mtf_diff = np.column_stack([mtf_lens[:, 0],
                                     utils.mtf_diffraction_limit(self.f_number, self.lam_diffr, mtf_lens[:, 0])])
+        if plot:
+            ax.plot(mtf_lin[:, 0], mtf_lin[:, 1], '.:', color='C0', label="system MTF (lin. edge fit)")
+            ax.plot(mtf_system[:, 0], mtf_system[:, 1], '.-', color='C1', label="system MTF")
+            ax.plot(mtf_sinc[:, 0], mtf_sinc[:, 1], 'k-', label="ideal sensor MTF")
+            ax.plot(mtf_lens_raw[:, 0], mtf_lens_raw[:, 1], '--', color='C2', label="system MTF / sensor MTF")
+            ax.plot(mtf_lens[:, 0], mtf_lens[:, 1], '-.', color='C3',
+                    label=f"lens MTF, fitted btw {fit_range_used[0] * self.f_nyquist:.0f}"
+                          f" and {fit_range_used[1] * self.f_nyquist:.0f} cy/mm")
+            ax.plot(mtf_diff[:, 0], mtf_diff[:, 1], ':k',
+                    label=f'diffraction limit for {self.lam_diffr / 1e-9:.0f} nm, f/{self.f_number:.1f}')
 
-        ax.plot(mtf_lin[:, 0], mtf_lin[:, 1], '.:', color='C0', label="system MTF (lin. edge fit)")
-        ax.plot(mtf_system[:, 0], mtf_system[:, 1], '.-', color='C1', label="system MTF")
-        ax.plot(mtf_sinc[:, 0], mtf_sinc[:, 1], 'k-', label="ideal sensor MTF")
-        ax.plot(mtf_lens_raw[:, 0], mtf_lens_raw[:, 1], '--', color='C2', label="system MTF / sensor MTF")
-        ax.plot(mtf_lens[:, 0], mtf_lens[:, 1], '-.', color='C3',
-                label=f"lens MTF, fitted btw {fit_range_used[0] * self.f_nyquist:.0f}"
-                      f" and {fit_range_used[1] * self.f_nyquist:.0f} cy/mm")
-        ax.plot(mtf_diff[:, 0], mtf_diff[:, 1], ':k',
-                label=f'diffraction limit for {self.lam_diffr / 1e-9:.0f} nm, f/{self.f_number:.1f}')
-
-        ax.set_xlim(*(x_lims if x_lims else self.x_lims))
-        ax.set_ylim(0, 1.2)
-        ax.grid()
-        ax.set_ylabel('MTF')
-        ax.set_xlabel('Spatial frequency (cy/mm)')
-        ax.legend(loc='best')
+            ax.set_xlim(*(x_lims if x_lims else self.x_lims))
+            ax.set_ylim(0, 1.2)
+            ax.grid()
+            ax.set_ylabel('MTF')
+            ax.set_xlabel('Spatial frequency (cy/mm)')
+            ax.legend(loc='best')
         return mtf_system, mtf_lens, status
+
+
+def solve_for_r(r0, alpha_vec):
+    def func(r, _r0, ca, sa):
+        lhs = np.tan(_r0) ** 2
+        rhs = np.tan(r * ca) ** 2 + np.tan(r * sa) ** 2
+        return lhs - rhs
+
+    _r0 = np.deg2rad(r0)
+    rx, ry = [], []
+    for alpha in alpha_vec:
+        ca, sa = np.cos(alpha), np.sin(alpha)
+        r = np.rad2deg(
+            scipy.optimize.fsolve(func, _r0, args=(_r0, ca, sa)))[0]
+        rx.append(r * ca)
+        ry.append(r * sa)
+    return rx, ry
 
 
 def plot_contour(data_h, data_v, range_lo, range_hi, lim_min, lim_av, text,
@@ -245,8 +262,14 @@ def plot_contour(data_h, data_v, range_lo, range_hi, lim_min, lim_av, text,
         cbar = plt.colorbar(cs)
         cbar.add_lines(cs2)
         a = np.linspace(0, 2 * np.pi, 101)
-        for r in [radius0, radius1]:
-            plt.plot(r * np.cos(a), r * np.sin(a), 'k--')
+        for r0 in [radius0, radius1]:
+
+            # Find horizontal and vertical field angle components corresponding to the
+            # azimuth angle 'a' and the total field angle 'r0',
+            # i.e., find tan(r0)**2 = tan(rx)**2 + tan(ry)**2, where rx = r * cos(a), ry = r * sin(a)
+            rx, ry = solve_for_r(r0, a)
+            plt.plot(rx, ry, 'k--')
+
         plt.plot(points[:, 0], points[:, 1], '.k')
         plt.gca().axis('equal')
         plt.ylim([-radius0, radius0])

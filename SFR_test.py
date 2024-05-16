@@ -13,14 +13,14 @@ def test():
     show_plots = 8  # setting this to 0 will result in no plots and much faster execution
     print(f"show_plots: {show_plots}")
 
-    N = 100  # sample ROI size is N x N pixels
+    n = 100  # sample ROI size is n x n pixels
 
-    n_well_FS = 10000  # simulated no. of electrons at full scale for the noise calculation
-    output_FS = 1.0  # image sensor output at full scale
+    n_well_fs = 10000  # simulated no. of electrons at full scale for the noise calculation
+    output_fs = 1.0  # image sensor output at full scale
 
     def add_noise(sample_edge):
         np.random.seed(0)  # make the noise deterministic in order to facilitate comparisons and debugging
-        return np.random.poisson(sample_edge / output_FS * n_well_FS) / n_well_FS
+        return np.random.poisson(sample_edge / output_fs * n_well_fs) / n_well_fs
 
     # --------------------------------------------------------------------
     # Create a curved edge image with a custom esf for testing
@@ -32,7 +32,7 @@ def test():
     # a more realistic (custom) esf
     esf = slanted_edge_target.InterpolateESF(x, edge_lsf_pixel).f
 
-    image_float, _ = slanted_edge_target.make_slanted_curved_edge((N, N), curvature=0.001,
+    image_float, _ = slanted_edge_target.make_slanted_curved_edge((n, n), curvature=0.001,
                                                                   illum_gradient_angle=0.0,
                                                                   illum_gradient_magnitude=0.0,
                                                                   low_level=0.25, hi_level=0.70, esf=esf, angle=5.0)
@@ -78,7 +78,7 @@ def test():
         mtf, status = sfr.calc_sfr(sample)
         print(f"\nNow do the exact same two function calls, but without diagnostic"
               f" plots, to get the true execution speed of the SFR calculation"
-              f" from the {N:d} x {N:d} pixel ROI image:")
+              f" from the {n:d} x {n:d} pixel ROI image:")
         # This is how you would call the function in an automated script.
         # Remember that you can comment out the "@execution_timer"
         # decorators in the SFR.py module and skip verbosity (default is False):
@@ -118,8 +118,8 @@ def test():
                      verticalalignment='top', bbox=props)
             plt.grid()
             shape = f'{sample_edge.shape[1]:d}x{sample_edge.shape[0]:d} px'
-            if simulate_noise and n_well_FS > 0:
-                n_well_lo, n_well_hi = np.unique(sample_edge)[[0, -1]] * n_well_FS
+            if simulate_noise and n_well_fs > 0:
+                n_well_lo, n_well_hi = np.unique(sample_edge)[[0, -1]] * n_well_fs
                 snr_lo, snr_hi = np.sqrt([n_well_lo, n_well_hi])
                 noise = f' SNR={snr_lo:.0f} (dark) and SNR={snr_hi:.0f} (bright)'
             else:
@@ -134,7 +134,7 @@ def test():
     # Test with ideal slanted edge, result should be very similar to a sinc function (fourier transform of
     # a square aperture representing the image sensor pixel) (black curve)
     if True:
-        ideal_edge = slanted_edge_target.make_ideal_slanted_edge((N, N), angle=85.0)
+        ideal_edge = slanted_edge_target.make_ideal_slanted_edge((n, n), angle=85.0)
 
         for simulate_noise in [False, True]:
             sample = add_noise(ideal_edge) if simulate_noise else ideal_edge
@@ -175,8 +175,8 @@ def test():
                 plt.ylabel('MTF')
                 plt.xlabel('Spatial frequency (cycles/pixel)')
                 shape = f'{ideal_edge.shape[1]:d}x{ideal_edge.shape[0]:d} px'
-                if simulate_noise and n_well_FS > 0:
-                    n_well_lo, n_well_hi = np.unique(ideal_edge)[[0, -1]] * n_well_FS
+                if simulate_noise and n_well_fs > 0:
+                    n_well_lo, n_well_hi = np.unique(ideal_edge)[[0, -1]] * n_well_fs
                     snr_lo, snr_hi = np.sqrt([n_well_lo, n_well_hi])
                     noise = f' SNR(dark) = {snr_lo:.0f} and SNR(bright) = {snr_hi:.0f}'
                 else:
